@@ -185,12 +185,6 @@ with st.sidebar:
     df_step3 = df_step2[df_step2['월'].isin(sel_months)] if sel_months else df_step2
 
     # 상세 그룹 및 제품군 선택
-    if '거래처그룹' in df_raw.columns:
-        avail_groups = sorted(df_step3['거래처그룹'].unique())
-        sel_groups = st.multiselect("4️⃣ 상세 거래처그룹 선택", avail_groups, default=avail_groups)
-        df_step4 = df_step3[df_step3['거래처그룹'].isin(sel_groups)] if sel_groups else df_step3
-    else: sel_groups = []; df_step4 = df_step3
-
     if '제품군' in df_raw.columns:
         avail_cats = sorted(df_step4['제품군'].unique())
         sel_cats = st.multiselect("5️⃣ 제품군 선택", avail_cats, default=avail_cats)
@@ -341,3 +335,4 @@ with tab5:
         p_detail = df_final[df_final['제품명'] == sel_p_name].groupby('거래처명').agg({'수량': 'sum', '매출액': 'sum'}).reset_index()
         p_detail['객단가'] = (p_detail['매출액'] * 1000000 / p_detail['수량']).round(0)
         st.dataframe(p_detail.sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f}백만원', '객단가': '{:,.0f}원'}), use_container_width=True)
+
