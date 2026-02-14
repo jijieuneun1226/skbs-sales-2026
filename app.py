@@ -8,11 +8,9 @@ import plotly.graph_objects as go
 # --------------------------------------------------------------------------------
 st.set_page_config(page_title="SKBS Sales Report", layout="wide", initial_sidebar_state="expanded")
 
-# URL 파라미터 확인
 query_params = st.query_params
 is_edit_mode = query_params.get("mode") == "edit"
 
-# 일반 접속자에게는 사이드바 숨김
 if not is_edit_mode:
     st.markdown("<style>[data-testid='stSidebar'] {display: none;} section[data-testid='stSidebar'] {width: 0px;}</style>", unsafe_allow_html=True)
 
@@ -78,7 +76,6 @@ def load_data_from_drive(file_id):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
-        # 탭 코드에서 '매출액'을 백만원 단위로 사용하므로 명시적 변환
         df['매출액'] = df['합계금액'] / 1000000
         
         def classify_channel(group):
@@ -128,44 +125,43 @@ def classify_customers(df, target_year):
     return base_info
 
 # --------------------------------------------------------------------------------
-# 3. 필터 제어 로직 (관리자 선택값이 뷰어에게 반영되도록 보완)
+# 3. 필터 제어 로직 (관리자가 뷰어의 화면을 결정하는 부분)
 # --------------------------------------------------------------------------------
 DRIVE_FILE_ID = '1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr'
 df_raw = load_data_from_drive(DRIVE_FILE_ID)
 if df_raw.empty: st.stop()
 
-# 뷰어와 관리자가 공유할 필터 상태 초기화 (2024년 고정 원하시면 여기서 [2024]로 수정)
-if 'shared_years' not in st.session_state: st.session_state.shared_years = [sorted(df_raw['년'].unique(), reverse=True)[0]]
-if 'shared_channels' not in st.session_state: st.session_state.shared_channels = sorted(df_raw['판매채널'].unique())
-if 'shared_quarters' not in st.session_state: st.session_state.shared_quarters = sorted(df_raw['분기'].unique())
-if 'shared_months' not in st.session_state: st.session_state.shared_months = sorted(df_raw['월'].unique())
-if 'shared_cats' not in st.session_state: st.session_state.shared_cats = sorted(df_raw['제품군'].unique())
-if 'shared_products' not in st.session_state: st.session_state.shared_products = sorted(df_raw['제품명'].unique())
+# ★ 뷰어에게 보여줄 조건을 여기서 직접 고정하세요 (관리자가 배포 시 수정하는 부분) ★
+VIEWER_YEARS = [2024] # 뷰어에게 보여줄 년도
+VIEWER_CHANNELS = sorted(df_raw['판매채널'].unique())
+VIEWER_QUARTERS = sorted(df_raw['분기'].unique())
+VIEWER_MONTHS = sorted(df_raw['월'].unique())
 
 if is_edit_mode:
     with st.sidebar:
-        st.header("🔍 데이터 필터링 (관리자)")
-        st.session_state.shared_channels = st.multiselect("0️⃣ 판매채널 선택", sorted(df_raw['판매채널'].unique()), default=st.session_state.shared_channels)
-        st.session_state.shared_years = st.multiselect("1️⃣ 년도 선택", sorted(df_raw['년'].unique(), reverse=True), default=st.session_state.shared_years)
-        st.session_state.shared_quarters = st.multiselect("2️⃣ 분기 선택", sorted(df_raw['분기'].unique()), default=st.session_state.shared_quarters)
+        st.header("⚙️ 관리자 필터 설정")
+        # 관리자 모드에서는 사이드바에서 자유롭게 선택
+        sel_channels = st.multiselect("판매채널 선택", sorted(df_raw['판매채널'].unique()), default=VIEWER_CHANNELS)
+        sel_years = st.multiselect("년도 선택", sorted(df_raw['년'].unique(), reverse=True), default=VIEWER_YEARS)
+        sel_quarters = st.multiselect("분기 선택", sorted(df_raw['분기'].unique()), default=VIEWER_QUARTERS)
         
-        # 분기-월 연동
         q_to_m = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]}
         avail_m = []
-        for q in st.session_state.shared_quarters: avail_m.extend(q_to_m[q])
-        st.session_state.shared_months = st.multiselect("3️⃣ 월 선택", sorted(avail_m), default=[m for m in st.session_state.shared_months if m in avail_m])
+        for q in sel_quarters: avail_m.extend(q_to_m[q])
+        sel_months = st.multiselect("월 선택", sorted(avail_m), default=[m for m in VIEWER_MONTHS if m in avail_m])
         
-        st.session_state.shared_cats = st.multiselect("4️⃣ 제품군 선택", sorted(df_raw['제품군'].unique()), default=st.session_state.shared_cats)
-        st.session_state.shared_products = st.multiselect("5️⃣ 제품명 선택", sorted(df_raw['제품명'].unique()), default=st.session_state.shared_products)
+        sel_cats = st.multiselect("제품군 선택", sorted(df_raw['제품군'].unique()), default=sorted(df_raw['제품군'].unique()))
+        sel_products = st.multiselect("제품명 선택", sorted(df_raw['제품명'].unique()), default=sorted(df_raw['제품명'].unique()))
+else:
+    # 뷰어 모드일 때는 위에서 설정한 VIEWER_... 값들로 고정됨
+    sel_years = VIEWER_YEARS
+    sel_channels = VIEWER_CHANNELS
+    sel_quarters = VIEWER_QUARTERS
+    sel_months = VIEWER_MONTHS
+    sel_cats = sorted(df_raw['제품군'].unique())
+    sel_products = sorted(df_raw['제품명'].unique())
 
-# 필터링 변수 확정
-sel_years = st.session_state.shared_years
-sel_channels = st.session_state.shared_channels
-sel_quarters = st.session_state.shared_quarters
-sel_months = st.session_state.shared_months
-sel_cats = st.session_state.shared_cats
-sel_products = st.session_state.shared_products
-
+# 데이터 최종 필터링
 df_year_filtered = df_raw[df_raw['년'].isin(sel_years)]
 df_final = df_year_filtered[
     (df_year_filtered['판매채널'].isin(sel_channels)) &
@@ -176,8 +172,9 @@ df_final = df_year_filtered[
 ]
 
 # --------------------------------------------------------------------------------
-# 5. 메인 탭 구성 (요청하신 그대로 유지)
+# 5. 메인 탭 구성 (요청하신 내용 그대로 유지)
 # --------------------------------------------------------------------------------
+# ... (이후 Tab 1 ~ Tab 5 내용은 이전과 동일하게 유지됩니다)
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 1. Overview", "🏆 2. VIP & 이탈 관리", "🔄 3. 재유입 패턴 분석", "🗺️ 4. 지역 분석", "📦 5. 제품 분석"])
 
 # --- [TAB 1] Overview ---
