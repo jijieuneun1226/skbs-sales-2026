@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # --------------------------------------------------------------------------------
-# 1. 페이지 설정
+# 1. 페이지 설정 및 권한 제어
 # --------------------------------------------------------------------------------
 st.set_page_config(page_title="SKBS Sales Report", layout="wide", initial_sidebar_state="expanded")
 
@@ -23,6 +23,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📊 SKBS Sales Report")
+
 # --------------------------------------------------------------------------------
 # 2. 데이터 로드 및 전처리
 # --------------------------------------------------------------------------------
@@ -113,59 +114,48 @@ def classify_customers(df, target_year):
         classification[biz_no] = status
     base_info['상태'] = base_info.index.map(classification)
     return base_info
+
 # --------------------------------------------------------------------------------
-# 4. 사이드바 필터링
+# 3. 사이드바 필터 (분기-월 연동 포함)
 # --------------------------------------------------------------------------------
-with st.sidebar:
-    st.header("🔍 데이터 필터링")
-    uploaded_file = st.file_uploader("파일 업로드", type=['xlsx', 'csv'])
-    if uploaded_file: df_raw = load_data(uploaded_file)
-    else: st.info("파일을 업로드해주세요."); st.stop()
+DRIVE_FILE_ID = '1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr'
+df_raw = load_data_from_drive(DRIVE_FILE_ID)
+if df_raw.empty: st.stop()
 
-    st.markdown("---")
-    all_years = sorted(df_raw['년'].unique(), reverse=True)
-    sel_years = st.multiselect("1️⃣ 년도 선택", all_years, default=all_years[:1])
-    df_step1 = df_raw[df_raw['년'].isin(sel_years)] if sel_years else df_raw
-    
-    avail_quarters = sorted(df_step1['분기'].unique())
-    sel_quarters = st.multiselect("2️⃣ 분기 선택", avail_quarters, default=avail_quarters)
-    df_step2 = df_step1[df_step1['분기'].isin(sel_quarters)] if sel_quarters else df_step1
-    
-    avail_months = sorted(df_step2['월'].unique())
-    sel_months = st.multiselect("3️⃣ 월 선택", avail_months, default=avail_months)
-    df_step3 = df_step2[df_step2['월'].isin(sel_months)] if sel_months else df_step2
+# 디폴트 설정
+sel_years = [df_raw['년'].max()]
+sel_channels = sorted(df_raw['판매채널'].unique())
+sel_quarters = sorted(df_raw['분기'].unique())
+sel_cats = sorted(df_raw['제품군'].unique())
 
-    # [수정] 거래처그룹 필터 추가
-    if '거래처그룹' in df_raw.columns:
-        avail_groups = sorted(df_step3['거래처그룹'].unique())
-        sel_groups = st.multiselect("4️⃣ 거래처그룹 선택", avail_groups, default=avail_groups)
-        df_step4 = df_step3[df_step3['거래처그룹'].isin(sel_groups)] if sel_groups else df_step3
-    else:
-        sel_groups = []; df_step4 = df_step3
+if is_edit_mode:
+    with st.sidebar:
+        st.header("⚙️ 관리자 설정")
+        sel_channels = st.multiselect("판매채널 선택", sorted(df_raw['판매채널'].unique()), default=sel_channels)
+        sel_years = st.multiselect("년도 선택", sorted(df_raw['년'].unique(), reverse=True), default=sel_years)
+        sel_quarters = st.multiselect("분기 선택", sorted(df_raw['분기'].unique()), default=sel_quarters)
+        
+        # 분기-월 연동 로직
+        q_to_m = {1: [1,2,3], 2: [4,5,6], 3: [7,8,9], 4: [10,11,12]}
+        avail_months = []
+        for q in sel_quarters: avail_months.extend(q_to_m[q])
+        sel_months = st.multiselect("월 선택", sorted(avail_months), default=sorted(avail_months))
+        
+        sel_cats = st.multiselect("제품군 선택", sorted(df_raw['제품군'].unique()), default=sel_cats)
+        temp_df = df_raw[df_raw['제품군'].isin(sel_cats)]
+        sel_products = st.multiselect("제품명 선택", sorted(temp_df['제품명'].unique()), default=sorted(temp_df['제품명'].unique()))
+else:
+    # 일반 모드 시 자동 월 설정
+    q_to_m = {1: [1,2,3], 2: [4,5,6], 3: [7,8,9], 4: [10,11,12]}
+    sel_months = []
+    for q in sel_quarters: sel_months.extend(q_to_m[q])
+    sel_products = sorted(df_raw['제품명'].unique())
 
-    if '제품군' in df_raw.columns:
-        avail_cats = sorted(df_step4['제품군'].unique())
-        sel_cats = st.multiselect("5️⃣ 제품군 선택", avail_cats, default=avail_cats)
-        df_step5 = df_step4[df_step4['제품군'].isin(sel_cats)] if sel_cats else df_step4
-    else:
-        sel_cats = []; df_step5 = df_step4
-
-    if '제품명' in df_raw.columns:
-        avail_products = sorted(df_step5['제품명'].unique())
-        sel_products = st.multiselect("6️⃣ 제품명 선택", avail_products, default=avail_products)
-    else:
-        sel_products = []
-
-    # 필터링 최종 적용
-    df_year_filtered = df_raw.copy()
-    if sel_years: df_year_filtered = df_year_filtered[df_year_filtered['년'].isin(sel_years)]
-    
-    df_final = df_year_filtered.copy()
-    if sel_quarters: df_final = df_final[df_final['분기'].isin(sel_quarters)]
-    if sel_months: df_final = df_final[df_final['월'].isin(sel_months)]
-    if sel_groups: df_final = df_final[df_final['거래처그룹'].isin(sel_groups)]
-    if sel_cats: df_final = df_final[df_final['제품군'].isin(sel_cats)]
-    if sel_products: df_final = df_final[df_final['제품명'].isin(sel_products)]
+df_final = df_raw[
+    (df_raw['년'].isin(sel_years)) & (df_raw['판매채널'].isin(sel_channels)) &
+    (df_raw['분기'].isin(sel_quarters)) & (df_raw['월'].isin(sel_months)) &
+    (df_raw['제품군'].isin(sel_cats)) & (df_raw['제품명'].isin(sel_products))
+]
 
 # --------------------------------------------------------------------------------
 # 5. 메인 탭 구성
@@ -326,3 +316,4 @@ with tab5:
     if t5_list:
         tr_df = df_final[df_final['제품명'].isin(t5_list)].groupby(['년월', '제품명'])['매출액'].sum().reset_index()
         st.plotly_chart(px.line(tr_df, x='년월', y='매출액', color='제품명'), use_container_width=True)
+
