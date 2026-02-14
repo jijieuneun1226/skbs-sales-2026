@@ -133,51 +133,68 @@ DRIVE_FILE_ID = '1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr'
 df_raw = load_data_from_drive(DRIVE_FILE_ID)
 if df_raw.empty: st.stop()
 
-# 기본값 설정
-sel_years = [df_raw['년'].max()]
-sel_channels = sorted(df_raw['판매채널'].unique())
-sel_quarters = sorted(df_raw['분기'].unique())
-sel_cats = sorted(df_raw['제품군'].unique())
-sel_groups = [] # 초기값 비움 (전체)
+# 초기 필터 데이터 (전체 기준)
+all_channels = sorted(df_raw['판매채널'].unique())
+all_years = sorted(df_raw['년'].unique(), reverse=True)
+all_quarters = sorted(df_raw['분기'].unique())
+all_cats = sorted(df_raw['제품군'].unique())
 
 if is_edit_mode:
     with st.sidebar:
         st.header("🔍 데이터 필터링")
         st.success("✅ 관리자 수정 모드")
-        sel_channels = st.multiselect("0️⃣ 판매채널 선택", sorted(df_raw['판매채널'].unique()), default=sel_channels)
+        
+        # 0. 채널 선택
+        sel_channels = st.multiselect("0️⃣ 판매채널 선택", all_channels, default=all_channels)
         df_s0 = df_raw[df_raw['판매채널'].isin(sel_channels)]
         
-        all_years = sorted(df_s0['년'].unique(), reverse=True)
-        sel_years = st.multiselect("1️⃣ 년도 선택", all_years, default=sel_years)
+        # 1. 년도 선택 (채널 선택 결과 반영)
+        curr_years = sorted(df_s0['년'].unique(), reverse=True)
+        sel_years = st.multiselect("1️⃣ 년도 선택", curr_years, default=curr_years[:1])
         df_s1 = df_s0[df_s0['년'].isin(sel_years)]
         
-        sel_quarters = st.multiselect("2️⃣ 분기 선택", sorted(df_s1['분기'].unique()), default=sel_quarters)
+        # 2. 분기 선택
+        curr_quarters = sorted(df_s1['분기'].unique())
+        sel_quarters = st.multiselect("2️⃣ 분기 선택", curr_quarters, default=curr_quarters)
         
-        # 분기-월 연동
+        # 3. 월 선택 (분기 연동)
         q_to_m = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]}
         avail_m = []
         for q in sel_quarters: avail_m.extend(q_to_m[q])
-        sel_months = st.multiselect("3️⃣ 월 선택", sorted(avail_m), default=sorted(avail_m))
+        avail_m = sorted([m for m in avail_m if m in df_s1['월'].unique()])
+        sel_months = st.multiselect("3️⃣ 월 선택", avail_m, default=avail_m)
         df_s2 = df_s1[df_s1['월'].isin(sel_months)]
         
-        sel_cats = st.multiselect("4️⃣ 제품군 선택", sorted(df_s2['제품군'].unique()), default=sel_cats)
-        temp_df = df_s2[df_s2['제품군'].isin(sel_cats)]
-        sel_products = st.multiselect("5️⃣ 제품명 선택", sorted(temp_df['제품명'].unique()), default=sorted(temp_df['제품명'].unique()))
+        # 4. 제품군 선택 (에러 방지 로직 적용)
+        curr_cats = sorted(df_s2['제품군'].unique())
+        # 이전에 선택된 sel_cats 중 현재 curr_cats에 존재하는 것만 유지
+        sel_cats = st.multiselect("4️⃣ 제품군 선택", curr_cats, default=curr_cats)
+        df_s3 = df_s2[df_s2['제품군'].isin(sel_cats)]
+        
+        # 5. 제품명 선택
+        curr_products = sorted(df_s3['제품명'].unique())
+        sel_products = st.multiselect("5️⃣ 제품명 선택", curr_products, default=curr_products)
+
 else:
-    # 보기 모드용 월 자동 계산
+    # 일반 모드 시 최신년도 및 전체 데이터 자동 설정
+    sel_channels = all_channels
+    sel_years = all_years[:1]
+    sel_quarters = all_quarters
     q_to_m = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]}
     sel_months = []
     for q in sel_quarters: sel_months.extend(q_to_m[q])
+    sel_cats = all_cats
     sel_products = sorted(df_raw['제품명'].unique())
 
 # 최종 필터 적용
 df_year_filtered = df_raw[df_raw['년'].isin(sel_years)]
-df_final = df_year_filtered[
-    (df_year_filtered['판매채널'].isin(sel_channels)) &
-    (df_year_filtered['분기'].isin(sel_quarters)) &
-    (df_year_filtered['월'].isin(sel_months)) &
-    (df_year_filtered['제품군'].isin(sel_cats)) &
-    (df_year_filtered['제품명'].isin(sel_products))
+df_final = df_raw[
+    (df_raw['판매채널'].isin(sel_channels)) &
+    (df_raw['년'].isin(sel_years)) &
+    (df_raw['분기'].isin(sel_quarters)) &
+    (df_raw['월'].isin(sel_months)) &
+    (df_raw['제품군'].isin(sel_cats)) &
+    (df_raw['제품명'].isin(sel_products))
 ]
 
 # --------------------------------------------------------------------------------
@@ -335,3 +352,4 @@ with tab5:
     if t5_list:
         tr_df = df_final[df_final['제품명'].isin(t5_list)].groupby(['년월', '제품명'])['매출액'].sum().reset_index()
         st.plotly_chart(px.line(tr_df, x='년월', y='매출액', color='제품명'), use_container_width=True)
+
