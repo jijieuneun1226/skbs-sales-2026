@@ -4,15 +4,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # --------------------------------------------------------------------------------
-# 1. 페이지 설정 및 URL 파라미터 연동
+# 1. 페이지 설정 및 URL 파라미터 읽기
 # --------------------------------------------------------------------------------
 st.set_page_config(page_title="SKBS Sales Report", layout="wide", initial_sidebar_state="expanded")
 
-# URL 파라미터 읽기
 query_params = st.query_params
 is_edit_mode = query_params.get("mode") == "edit"
 
-# 일반 접속자에게는 사이드바 숨김
+# 일반 접속자 사이드바 숨김
 if not is_edit_mode:
     st.markdown("<style>[data-testid='stSidebar'] {display: none;} section[data-testid='stSidebar'] {width: 0px;}</style>", unsafe_allow_html=True)
 
@@ -21,6 +20,7 @@ st.markdown("""
     div.block-container {padding-top: 1rem;}
     .metric-card {background-color: #f8f9fa; border-left: 5px solid #4e79a7; padding: 15px; border-radius: 5px; margin-bottom: 10px;}
     .info-box {padding: 15px; border-radius: 5px; font-size: 14px; margin-bottom: 20px; border: 1px solid #e0e0e0;}
+    .share-box {background-color: #e7f3ff; padding: 15px; border-radius: 10px; border: 1px solid #b3d7ff; margin-top: 20px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -116,56 +116,59 @@ def classify_customers(df, target_year):
             else: status = "🔄 재유입 (복귀)" if has_history else "🆕 신규 (New)"
         else:
             if has_t1: status = "📉 1년 이탈 (최근)"
+            elif has_t2: status = "📉 2년 연속 이탈"
+            elif has_t3: status = "📉 3년 연속 이탈"
             else: status = "💤 장기 이탈 (4년+)"
         classification[biz_no] = status
     base_info['상태'] = base_info.index.map(classification)
     return base_info
 
 # --------------------------------------------------------------------------------
-# 3. URL 기반 필터 제어 (방법 1 핵심 로직)
+# 3. 사이드바 및 URL 파라미터 처리
 # --------------------------------------------------------------------------------
 DRIVE_FILE_ID = '1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr'
 df_raw = load_data_from_drive(DRIVE_FILE_ID)
 if df_raw.empty: st.stop()
 
-# URL에서 파라미터 가져오기 (없으면 기본값 설정)
-def get_param(key, default):
-    val = query_params.get_all(key)
-    if not val: return default
-    # 숫자형 파라미터 처리
-    if key in ['year', 'quarter', 'month']:
-        return [int(x) for x in val]
-    return val
+# URL에서 설정값 불러오기 함수
+def get_list_param(key, default):
+    res = query_params.get_all(key)
+    if not res: return default
+    if key in ['y', 'q', 'm']: return [int(x) for x in res]
+    return res
 
-default_years = get_param('year', [sorted(df_raw['년'].unique(), reverse=True)[0]])
-default_channels = get_param('channel', sorted(df_raw['판매채널'].unique()))
-default_quarters = get_param('quarter', sorted(df_raw['분기'].unique()))
-default_months = get_param('month', sorted(df_raw['월'].unique()))
+# 뷰어/관리자 공통 초기값
+sel_years = get_list_param('y', [df_raw['년'].max()])
+sel_channels = get_list_param('c', sorted(df_raw['판매채널'].unique()))
+sel_quarters = get_list_param('q', sorted(df_raw['분기'].unique()))
+sel_months = get_list_param('m', sorted(df_raw['월'].unique()))
 
 if is_edit_mode:
     with st.sidebar:
         st.header("⚙️ 관리자 필터 설정")
-        sel_channels = st.multiselect("판매채널", sorted(df_raw['판매채널'].unique()), default=default_channels)
-        sel_years = st.multiselect("년도 선택", sorted(df_raw['년'].unique(), reverse=True), default=default_years)
-        sel_quarters = st.multiselect("분기 선택", sorted(df_raw['분기'].unique()), default=default_quarters)
+        sel_channels = st.multiselect("채널", sorted(df_raw['판매채널'].unique()), default=sel_channels)
+        sel_years = st.multiselect("년도", sorted(df_raw['년'].unique(), reverse=True), default=sel_years)
+        sel_quarters = st.multiselect("분기", sorted(df_raw['분기'].unique()), default=sel_quarters)
         
         q_to_m = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]}
         avail_m = []
         for q in sel_quarters: avail_m.extend(q_to_m[q])
-        sel_months = st.multiselect("월 선택", sorted(avail_m), default=[m for m in default_months if m in avail_m])
+        sel_months = st.multiselect("월", sorted(avail_m), default=[m for m in sel_months if m in avail_m])
         
-        sel_cats = st.multiselect("제품군 선택", sorted(df_raw['제품군'].unique()), default=sorted(df_raw['제품군'].unique()))
-        sel_products = st.multiselect("제품명 선택", sorted(df_raw['제품명'].unique()), default=sorted(df_raw['제품명'].unique()))
-        
-        # [중요] 선택할 때마다 URL 업데이트
-        st.query_params.update(year=sel_years, channel=sel_channels, quarter=sel_quarters, month=sel_months)
-        st.info("💡 위 조건을 선택한 후 주소창의 링크를 복사해 공유하세요!")
+        sel_cats = st.multiselect("제품군", sorted(df_raw['제품군'].unique()), default=sorted(df_raw['제품군'].unique()))
+        sel_products = st.multiselect("제품명", sorted(df_raw['제품명'].unique()), default=sorted(df_raw['제품명'].unique()))
+
+        # 공유 링크 생성 로직
+        st.markdown("---")
+        st.subheader("🔗 공유용 링크")
+        base_url = "https://skbs-report.streamlit.app/" # 실제 주소
+        # 파라미터 간결화 (y=년도, c=채널, q=분기, m=월)
+        params = f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(sel_channels)}&q={'&q='.join(map(str, sel_quarters))}&m={'&m='.join(map(str, sel_months))}"
+        share_url = base_url + params.replace(" ", "+")
+        st.text_area("이 링크를 복사해서 뷰어에게 보내세요:", share_url, height=100)
+        st.caption("※ 이 링크로 접속하면 사이드바가 숨겨진 상태로 고정됩니다.")
 else:
-    # 뷰어 모드: URL에 포함된 값으로 고정
-    sel_years = default_years
-    sel_channels = default_channels
-    sel_quarters = default_quarters
-    sel_months = default_months
+    # 뷰어 모드 기본값 (전체 제품)
     sel_cats = sorted(df_raw['제품군'].unique())
     sel_products = sorted(df_raw['제품명'].unique())
 
@@ -178,7 +181,6 @@ df_final = df_year_filtered[
     (df_year_filtered['제품군'].isin(sel_cats)) &
     (df_year_filtered['제품명'].isin(sel_products))
 ]
-
 # --------------------------------------------------------------------------------
 # 5. 메인 탭 구성 (요청하신 로직 100% 유지)
 # --------------------------------------------------------------------------------
@@ -312,3 +314,4 @@ with tab5:
         st.subheader(f"🎯 [{sel_p_name}] 구매 거래처 리스트")
         p_detail = df_final[df_final['제품명'] == sel_p_name].groupby('거래처명').agg({'수량': 'sum', '매출액': 'sum'}).reset_index()
         st.dataframe(p_detail.sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f}백만원'}), use_container_width=True)
+
