@@ -178,35 +178,6 @@ df_final = df_year_filtered[
 # --------------------------------------------------------------------------------
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 1. Overview", "🏆 2. VIP & 이탈 관리", "🔄 3. 재유입 패턴 분석", "🗺️ 4. 지역 분석", "📦 5. 제품 분석"])
 
-# (이후 분석 코드는 님께서 주신 원본과 동일하므로 생략합니다. 
-# 전체 코드로 복사하실 때는 위 1~3 섹션 아래에 기존 탭 분석 내용들을 그대로 붙여넣으시면 됩니다.)
-
-with tab1:
-    st.markdown("### 📈 성과 요약")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("총 매출액 (년도)", f"{df_year_filtered['매출액'].sum():,.0f}백만원")
-    c2.metric("총 구매처수 (년도)", f"{df_year_filtered['사업자번호'].nunique():,}처")
-    c3.metric("분기 매출액", f"{df_final['매출액'].sum():,.0f}백만원")
-    c4.metric("분기 구매처수", f"{df_final['사업자번호'].nunique():,}처")
-    st.markdown("---")
-    col_a, col_b = st.columns([1, 1.5])
-    with col_a:
-        st.subheader("🏥 진료과별 매출 비중")
-        st.plotly_chart(px.pie(df_final, values='매출액', names='진료과', hole=0.4), use_container_width=True)
-    with col_b:
-        st.subheader("📅 월별 추이")
-        monthly = df_final.groupby('년월').agg({'매출액': 'sum', '사업자번호': 'nunique'}).reset_index()
-        fig_dual = go.Figure()
-        fig_dual.add_trace(go.Bar(x=monthly['년월'], y=monthly['매출액'], name='매출(백만원)', marker_color='#a8dadc', yaxis='y1'))
-        fig_dual.add_trace(go.Scatter(x=monthly['년월'], y=monthly['사업자번호'], name='구매처수(처)', line=dict(color='#e63946', width=3), yaxis='y2'))
-        fig_dual.update_layout(yaxis=dict(side='left'), yaxis2=dict(side='right', overlaying='y'), legend=dict(x=0, y=1.1, orientation='h'))
-        st.plotly_chart(fig_dual, use_container_width=True)
-
-# --------------------------------------------------------------------------------
-# 5. 메인 탭 구성 (요청하신 그대로 유지)
-# --------------------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 1. Overview", "🏆 2. VIP & 이탈 관리", "🔄 3. 재유입 패턴 분석", "🗺️ 4. 지역 분석", "📦 5. 제품 분석"])
-
 # --- [TAB 1] Overview ---
 with tab1:
     st.markdown("### 📈 성과 요약")
@@ -357,3 +328,4 @@ with tab5:
     if t5_list:
         tr_df = df_final[df_final['제품명'].isin(t5_list)].groupby(['년월', '제품명'])['매출액'].sum().reset_index()
         st.plotly_chart(px.line(tr_df, x='년월', y='매출액', color='제품명'), use_container_width=True)
+
