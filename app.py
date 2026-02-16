@@ -6,6 +6,7 @@ import urllib.parse
 import numpy as np
 import requests
 import io
+import re
 
 # --------------------------------------------------------------------------------
 # 1. 페이지 설정
@@ -29,90 +30,86 @@ st.markdown("""
 st.title("📊 SKBS Sales Report")
 
 # --------------------------------------------------------------------------------
-# --------------------------------------------------------------------------------
-# 2. 데이터 로드 (엔터/공백 무시하고 무조건 찾기)
+# 2. 데이터 로드 (바이러스 경고 완벽 우회 버전)
 # --------------------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data_from_drive(file_id):
-    import re # 정규표현식 모듈 추가 (강력한 문자열 검색용)
+    URL = "https://drive.google.com/uc?export=download"
+    session = requests.Session()
 
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    
     try:
-        # 1. 파일 다운로드
-        session = requests.Session()
-        response = session.get(url, stream=True)
+        # [1단계] 접속 시도
+        response = session.get(URL, params={'id': file_id}, stream=True)
         
+        # [2단계] 바이러스 경고 토큰 확인 (쿠키 또는 confirm=t)
         token = None
         for key, value in response.cookies.items():
             if key.startswith('download_warning'):
                 token = value
                 break
+        
+        # 토큰이 있으면 그걸 쓰고, 없으면 't'를 써서 강제 요청
         if token:
-            url = f"https://drive.google.com/uc?export=download&confirm={token}&id={file_id}"
-            response = session.get(url, stream=True)
-            
+            params = {'id': file_id, 'confirm': token}
+            response = session.get(URL, params=params, stream=True)
+        else:
+            # 토큰이 없어도 HTML 경고창이 떴다면 confirm=t로 한 번 더 시도
+            if "virus" in response.text.lower() or "warning" in response.text.lower():
+                params = {'id': file_id, 'confirm': 't'}
+                response = session.get(URL, params=params, stream=True)
+
+        # [3단계] 상태 코드 확인
         if response.status_code != 200:
-            st.error(f"❌ 다운로드 실패 (Code: {response.status_code})")
+            st.error(f"❌ 접속 실패 (Code: {response.status_code})")
             return pd.DataFrame()
 
+        # [4단계] 엑셀 로드 및 헤더 찾기 (초정밀 탐색)
         file_bytes = io.BytesIO(response.content)
         
-        # ----------------------------------------------------------------
-        # 🕵️‍♂️ [초정밀 탐색] 줄바꿈(\n), 탭(\t), 공백 모두 제거 후 검색
-        # ----------------------------------------------------------------
         try:
-            # 넉넉하게 50줄까지 읽어봅니다.
+            # 넉넉하게 50줄 읽기
             df_preview = pd.read_excel(file_bytes, header=None, nrows=50, engine='openpyxl')
-        except:
-            file_bytes.seek(0)
-            df_preview = pd.read_csv(file_bytes, header=None, nrows=50, encoding='cp949')
-
-        target_keyword = "매출일자"
-        header_row_index = 0
-        found_header = False
-        
-        # 한 줄씩 검사
-        for idx, row in df_preview.iterrows():
-            for cell in row:
-                # 셀 값을 문자로 바꾸고 -> 모든 공백(띄어쓰기,엔터,탭) 제거
-                cell_str = str(cell)
-                clean_str = re.sub(r'\s+', '', cell_str) # 핵심: \s+는 모든 공백문자 의미
-                
-                if target_keyword in clean_str:
+            
+            target_keyword = "매출일자"
+            header_row_index = 0
+            found_header = False
+            
+            # 행 단위로 정밀 검사
+            for idx, row in df_preview.iterrows():
+                # 모든 공백 제거 후 검색
+                row_str = row.astype(str).str.replace(r'\s+', '', regex=True).values
+                if any(target_keyword in str(x) for x in row_str):
                     header_row_index = idx
                     found_header = True
-                    # st.success(f"찾았다! {idx+1}번째 줄에서 '{cell_str}' 발견!") # (디버깅용)
                     break
-            if found_header:
-                break
-        
-        if not found_header:
-            st.warning(f"⚠️ 50줄을 뒤져도 '{target_keyword}'를 못 찾았습니다. 1번째 줄을 제목으로 씁니다.")
-
-        # ----------------------------------------------------------------
-        # 📂 찾은 위치부터 다시 읽기
-        # ----------------------------------------------------------------
-        file_bytes.seek(0)
-        try:
-            df = pd.read_excel(file_bytes, header=header_row_index, engine='openpyxl')
-        except:
+            
+            # 진짜 위치부터 다시 읽기
             file_bytes.seek(0)
-            df = pd.read_csv(file_bytes, header=header_row_index, encoding='cp949')
+            df = pd.read_excel(file_bytes, header=header_row_index, engine='openpyxl')
+            
+            if not found_header:
+                st.warning("⚠️ '매출일자'를 자동으로 못 찾았습니다. 첫 줄을 읽습니다.")
+
+        except Exception as e:
+            st.error("❌ 파일 읽기 실패 (엑셀 형식이 아니거나 손상됨)")
+            # 디버깅용: HTML 내용이 여전히 오는지 확인
+            if b"<!DOCTYPE html>" in response.content[:100]:
+                st.error("🚨 여전히 구글 경고 페이지(HTML)가 다운로드되고 있습니다.")
+            return pd.DataFrame()
 
     except Exception as e:
-        st.error(f"❌ 파일 읽기 오류: {e}")
+        st.error(f"❌ 다운로드 오류: {e}")
         return pd.DataFrame()
 
     # ------------------------------------------------------
     # 전처리 (컬럼명 대청소)
     # ------------------------------------------------------
-    # 컬럼 이름에 섞인 엔터, 공백도 다 지워버림
+    # 컬럼 이름의 모든 공백 제거 (수 량 -> 수량)
     df.columns = [re.sub(r'\s+', '', str(c)) for c in df.columns]
     
     col_map = {
         '매출일자': ['매출일자', '날짜', 'Date', '일자', 'YYYYMMDD'],
-        '제품명': ['제품명변환', '제품명', '품목명', 'ItemName', '제품'], # 공백 제거된 버전으로 매핑
+        '제품명': ['제품명변환', '제품명', '품목명', 'ItemName', '제품'], # 공백 제거됨
         '합계금액': ['합계금액', '공급가액', '금액', '매출액', 'Amount'],
         '수량': ['수량', 'Qty', '판매수량'], 
         '사업자번호': ['사업자번호', '사업자등록번호', 'BizNo', 'BusinessNumber'],
@@ -128,16 +125,15 @@ def load_data_from_drive(file_id):
     for std_col, candidates in col_map.items():
         if std_col in df.columns: continue
         for cand in candidates:
-            # 이미 위에서 공백을 다 지웠으므로 cand도 공백 없이 비교
+            # 매핑 후보도 공백 제거하고 비교
             clean_cand = re.sub(r'\s+', '', cand)
             if clean_cand in current_cols:
-                # 원래 이름(clean_cand)을 표준 이름(std_col)으로 변경
                 df.rename(columns={clean_cand: std_col}, inplace=True)
                 break
             if std_col in df.columns: break
 
     try:
-        # [지역 자동 생성]
+        # 지역 자동 생성
         if '지역' not in df.columns and '주소' in df.columns:
             df['지역_임시'] = df['주소'].astype(str).str.split().str[0]
             # (매핑 로직 생략 - 기존과 동일)
@@ -146,7 +142,7 @@ def load_data_from_drive(file_id):
         elif '지역' not in df.columns:
              df['지역'] = '미분류'
 
-        # [날짜 변환]
+        # 날짜 변환
         if '매출일자' in df.columns:
             df['매출일자'] = pd.to_datetime(df['매출일자'], errors='coerce')
             df = df.dropna(subset=['매출일자'])
@@ -156,10 +152,10 @@ def load_data_from_drive(file_id):
             df['월'] = df['매출일자'].dt.month
             df['년월'] = df['매출일자'].dt.strftime('%Y-%m')
         else:
-            st.error(f"🚨 헤더를 찾았으나 '매출일자' 데이터 변환에 실패했습니다. 컬럼 목록: {df.columns.tolist()}")
+            st.error(f"🚨 '매출일자' 변환 실패. 인식된 컬럼: {df.columns.tolist()}")
             return pd.DataFrame()
 
-        # [기타 전처리]
+        # 기타 전처리
         if '제품명' in df.columns:
             df['제품명'] = df['제품명'].astype(str).str.replace(r'\(.*?\)', '', regex=True).str.strip()
         else: df['제품명'] = '미분류'
@@ -186,10 +182,36 @@ def load_data_from_drive(file_id):
         if '사업자번호' not in df.columns: df['사업자번호'] = df['거래처명']
              
     except Exception as e:
-        st.error(f"❌ 데이터 전처리 오류: {e}")
+        st.error(f"❌ 전처리 오류: {e}")
         return pd.DataFrame()
         
     return df
+
+@st.cache_data
+def classify_customers(df, target_year):
+    cust_year = df.groupby(['사업자번호', '년']).size().unstack(fill_value=0)
+    base_info = df.sort_values('매출일자').groupby('사업자번호').agg({
+        '거래처명': 'last', '진료과': 'last', '지역': 'last', '매출일자': 'max'
+    }).rename(columns={'매출일자': '최근구매일'})
+    sales_ty = df[df['년'] == target_year].groupby('사업자번호')['매출액'].sum()
+    base_info['해당년도_매출'] = base_info.index.map(sales_ty).fillna(0)
+    
+    classification = {}
+    for biz_no in base_info.index:
+        has_ty = (target_year in cust_year.columns) and (cust_year.loc[biz_no, target_year] > 0)
+        has_t1 = (target_year - 1 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 1] > 0)
+        past_years = [y for y in cust_year.columns if y < target_year - 1]
+        has_history = cust_year.loc[biz_no, past_years].sum() > 0 if past_years else False
+        
+        if has_ty:
+            if has_t1: status = "✅ 기존 (유지)"
+            else: status = "🔄 재유입 (복귀)" if has_history else "🆕 신규 (New)"
+        else:
+            status = "📉 이탈"
+        classification[biz_no] = status
+    base_info['상태'] = base_info.index.map(classification)
+    return base_info
+
 # --------------------------------------------------------------------------------
 # 📊 [Executive] 임원 보고용 스마트 오버뷰
 # --------------------------------------------------------------------------------
@@ -429,4 +451,3 @@ with tab4:
 with tab5:
     render_advanced_insights(df_final, "제품별 분석")
     render_product_strategy(df_final)
-
