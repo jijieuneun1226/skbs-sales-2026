@@ -30,7 +30,7 @@ st.markdown("""
 st.title("📊 SKBS Sales Report")
 
 # --------------------------------------------------------------------------------
-# 2. 데이터 로드 (바이러스 경고 완벽 우회 버전)
+# 2. 데이터 로드 (HTML 파싱을 통한 강력한 우회 기능 탑재)
 # --------------------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data_from_drive(file_id):
@@ -38,73 +38,93 @@ def load_data_from_drive(file_id):
     session = requests.Session()
 
     try:
-        # [1단계] 접속 시도
+        # [1단계] 최초 접속 시도
         response = session.get(URL, params={'id': file_id}, stream=True)
         
-        # [2단계] 바이러스 경고 토큰 확인 (쿠키 또는 confirm=t)
+        # [2단계] HTML(경고창)인지 확인
+        # 엑셀 파일이라면 바이너리 데이터겠지만, 경고창이라면 텍스트(HTML)가 옴
         token = None
-        for key, value in response.cookies.items():
-            if key.startswith('download_warning'):
-                token = value
-                break
+        uuid = None
         
-        # 토큰이 있으면 그걸 쓰고, 없으면 't'를 써서 강제 요청
-        if token:
-            params = {'id': file_id, 'confirm': token}
-            response = session.get(URL, params=params, stream=True)
-        else:
-            # 토큰이 없어도 HTML 경고창이 떴다면 confirm=t로 한 번 더 시도
-            if "virus" in response.text.lower() or "warning" in response.text.lower():
-                params = {'id': file_id, 'confirm': 't'}
+        # 만약 'text/html' 형식이면 경고창이 뜬 것임
+        if "text/html" in response.headers.get("Content-Type", ""):
+            html_content = response.text
+            
+            # (1) 경고창 HTML 내부에서 'confirm' 값 찾기 (confirm="xxxx")
+            # 보통 confirm=t 또는 긴 코드가 들어있음
+            match_confirm = re.search(r'name="confirm" value="(.+?)"', html_content)
+            if match_confirm:
+                token = match_confirm.group(1)
+            
+            # (2) 'uuid' 값 찾기 (대용량 파일일 때 필수)
+            match_uuid = re.search(r'name="uuid" value="(.+?)"', html_content)
+            if match_uuid:
+                uuid = match_uuid.group(1)
+
+            # (3) 찾은 토큰과 UUID로 '진짜 다운로드 링크' 재조립
+            if token:
+                params = {'id': file_id, 'confirm': token}
+                if uuid:
+                    params['uuid'] = uuid
+                
+                # 재요청 (이건 무조건 됨)
                 response = session.get(URL, params=params, stream=True)
 
-        # [3단계] 상태 코드 확인
+        # [3단계] 최종 응답 상태 확인
         if response.status_code != 200:
-            st.error(f"❌ 접속 실패 (Code: {response.status_code})")
+            st.error(f"❌ 다운로드 연결 실패 (Code: {response.status_code})")
             return pd.DataFrame()
 
-        # [4단계] 엑셀 로드 및 헤더 찾기 (초정밀 탐색)
+        # [4단계] 엑셀 열기 (헤더 정밀 탐색)
         file_bytes = io.BytesIO(response.content)
         
         try:
-            # 넉넉하게 50줄 읽기
+            # 50줄 스캔하여 '매출일자' 찾기
             df_preview = pd.read_excel(file_bytes, header=None, nrows=50, engine='openpyxl')
             
             target_keyword = "매출일자"
             header_row_index = 0
             found_header = False
             
-            # 행 단위로 정밀 검사
+            # 행 단위 정밀 검사
             for idx, row in df_preview.iterrows():
-                # 모든 공백 제거 후 검색
+                # 모든 공백 제거 후 비교 (매출 일자 -> 매출일자)
                 row_str = row.astype(str).str.replace(r'\s+', '', regex=True).values
                 if any(target_keyword in str(x) for x in row_str):
                     header_row_index = idx
                     found_header = True
                     break
             
-            # 진짜 위치부터 다시 읽기
+            # 찾은 위치부터 다시 읽기
             file_bytes.seek(0)
             df = pd.read_excel(file_bytes, header=header_row_index, engine='openpyxl')
             
             if not found_header:
-                st.warning("⚠️ '매출일자'를 자동으로 못 찾았습니다. 첫 줄을 읽습니다.")
+                st.warning("⚠️ '매출일자'를 자동으로 찾지 못했습니다. 첫 번째 줄을 읽습니다.")
 
         except Exception as e:
-            st.error("❌ 파일 읽기 실패 (엑셀 형식이 아니거나 손상됨)")
-            # 디버깅용: HTML 내용이 여전히 오는지 확인
-            if b"<!DOCTYPE html>" in response.content[:100]:
-                st.error("🚨 여전히 구글 경고 페이지(HTML)가 다운로드되고 있습니다.")
+            # 여전히 에러가 난다면, 구글이 '일일 허용량 초과(Quota Exceeded)'를 띄웠을 수 있음
+            st.error("❌ 파일 읽기 실패")
+            content_head = response.content[:200].decode('utf-8', errors='ignore')
+            
+            if "Quota exceeded" in content_head:
+                st.error("🚨 **원인 발견:** 구글 드라이브 다운로드 허용량이 초과되었습니다. (너무 많이 다운로드함)")
+                st.info("💡 **해결책:** 1시간 뒤에 다시 시도하거나, 파일을 복사본으로 만들어서 새 링크를 따야 합니다.")
+            elif "<!DOCTYPE html>" in content_head:
+                st.error("🚨 여전히 구글 보안 경고창(HTML)이 다운로드되고 있습니다. (우회 실패)")
+            else:
+                st.error(f"상세 에러: {e}")
+                
             return pd.DataFrame()
 
     except Exception as e:
-        st.error(f"❌ 다운로드 오류: {e}")
+        st.error(f"❌ 로딩 중 치명적 오류: {e}")
         return pd.DataFrame()
 
     # ------------------------------------------------------
-    # 전처리 (컬럼명 대청소)
+    # 전처리 (컬럼 청소 & 매핑)
     # ------------------------------------------------------
-    # 컬럼 이름의 모든 공백 제거 (수 량 -> 수량)
+    # 1. 컬럼명 공백 대청소
     df.columns = [re.sub(r'\s+', '', str(c)) for c in df.columns]
     
     col_map = {
@@ -112,12 +132,12 @@ def load_data_from_drive(file_id):
         '제품명': ['제품명변환', '제품명', '품목명', 'ItemName', '제품'], # 공백 제거됨
         '합계금액': ['합계금액', '공급가액', '금액', '매출액', 'Amount'],
         '수량': ['수량', 'Qty', '판매수량'], 
-        '사업자번호': ['사업자번호', '사업자등록번호', 'BizNo', 'BusinessNumber'],
-        '거래처명': ['거래처명', '병원명', '요양기관명', 'Customer'],
+        '사업자번호': ['사업자번호', '사업자등록번호', 'BizNo'],
+        '거래처명': ['거래처명', '병원명', '요양기관명'],
         '진료과': ['진료과', '진료과목'],
         '제품군': ['제품군', '카테고리'],
         '거래처그룹': ['거래처그룹', '그룹', '판매채널'],
-        '주소': ['도로명주소', '주소', '사업장주소', '지번주소'],
+        '주소': ['도로명주소', '주소', '사업장주소'],
         '지역': ['지역', '시도']
     }
     
@@ -125,7 +145,7 @@ def load_data_from_drive(file_id):
     for std_col, candidates in col_map.items():
         if std_col in df.columns: continue
         for cand in candidates:
-            # 매핑 후보도 공백 제거하고 비교
+            # 후보군도 공백 제거하고 비교
             clean_cand = re.sub(r'\s+', '', cand)
             if clean_cand in current_cols:
                 df.rename(columns={clean_cand: std_col}, inplace=True)
@@ -136,7 +156,7 @@ def load_data_from_drive(file_id):
         # 지역 자동 생성
         if '지역' not in df.columns and '주소' in df.columns:
             df['지역_임시'] = df['주소'].astype(str).str.split().str[0]
-            # (매핑 로직 생략 - 기존과 동일)
+            # (매핑은 생략, 기본값 사용)
             df['지역'] = df['지역_임시'] 
             df.drop(columns=['지역_임시'], inplace=True, errors='ignore')
         elif '지역' not in df.columns:
@@ -200,6 +220,8 @@ def classify_customers(df, target_year):
     for biz_no in base_info.index:
         has_ty = (target_year in cust_year.columns) and (cust_year.loc[biz_no, target_year] > 0)
         has_t1 = (target_year - 1 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 1] > 0)
+        has_t2 = (target_year - 2 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 2] > 0)
+        has_t3 = (target_year - 3 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 3] > 0)
         past_years = [y for y in cust_year.columns if y < target_year - 1]
         has_history = cust_year.loc[biz_no, past_years].sum() > 0 if past_years else False
         
