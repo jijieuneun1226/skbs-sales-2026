@@ -137,7 +137,7 @@ def classify_customers(df, target_year):
     return base_info
 
 # --------------------------------------------------------------------------------
-# 3. 분석 모듈 (수정 요청 사항 반영)
+# 3. 분석 모듈 정의
 # --------------------------------------------------------------------------------
 
 def render_smart_overview(df_curr, df_raw):
@@ -182,7 +182,7 @@ def render_winback_quality(df, current_year):
     
     st.markdown(f"### ♻️ {current_year}년 재유입(Win-back) 현황 분석")
     st.markdown("""<div class="info-box">
-    <b>🔍 재유입 기준:</b> 직전 연도(공백기) 구매가 전혀 없었으나, 과거 구매 이력이 있는 거래처가 올해 복귀한 경우<br>
+    <b>🔍 재유입 정의:</b> 직전 연도(공백기) 구매가 전혀 없었으나, 과거 구매 이력이 있는 거래처가 올해 복귀한 경우<br>
     <b>🚦 회복 퀄리티 등급 (과거 전성기 대비 올해 매출 비중):</b><br>
     - 🟢 <b>완전 회복:</b> 80% 이상 / 🟡 <b>회복 중:</b> 20~80% / 🔴 <b>초기 반응(Test):</b> 20% 미만 (집중 케어 필요)
     </div>""", unsafe_allow_html=True)
@@ -202,7 +202,6 @@ def render_winback_quality(df, current_year):
         
     df_wb['상태'] = df_wb['회복률'].apply(get_status_str)
     df_wb = df_wb.reset_index().sort_values('올해매출', ascending=False)
-    # ValueError 방지용 사이즈 보정
     df_wb['Bubble_Size'] = df_wb['올해매출'].apply(lambda x: max(x, 0.1))
 
     c1, c2, c3 = st.columns(3)
@@ -218,7 +217,7 @@ def render_winback_quality(df, current_year):
                              color_discrete_map={"완전 회복": "green", "회복 중": "orange", "초기 반응(Test)": "red"})
             fig.add_shape(type="line", x0=0, y0=0, x1=df_wb['과거최고'].max(), y1=df_wb['과거최고'].max(), line=dict(color="gray", dash="dash"))
             st.plotly_chart(fig, use_container_width=True)
-        except Exception as e: st.warning(f"차트 생성 중 데이터 형식 오류가 발생했습니다: {e}")
+        except: st.warning("차트 데이터 형식 오류")
     with col_li:
         st.markdown('<p class="guide-text">💡 아래 리스트의 행을 클릭하면 상세 구매 이력이 연동됩니다.</p>', unsafe_allow_html=True)
         st.dataframe(df_wb[['상태', '거래처명', '올해매출', '회복률']], hide_index=True, use_container_width=True,
@@ -229,11 +228,11 @@ def render_regional_deep_dive(df):
     reg_stats = df.groupby('지역').agg(Sales=('매출액', 'sum'), Count=('사업자번호', 'nunique')).reset_index()
     reg_stats['Per'] = reg_stats['Sales'] / reg_stats['Count']
     
-    st.markdown("### 🗺️ 지역별 심층 효율성 분석")
+    st.markdown("### 🗺️ 지역별 심층 효율성 및 거점 영향력 분석")
     st.markdown(f"""<div class="info-box">
     <b>📈 지역 전략 요약:</b><br>
     - 현재 가장 매출이 높은 지역은 <b>{reg_stats.loc[reg_stats['Sales'].idxmax(), '지역']}</b>이며, 
-    병원 1곳당 효율(객단가)이 가장 좋은 곳은 <b>{reg_stats.loc[reg_stats['Per'].idxmax(), '지역']}</b>({reg_stats['Per'].max():.1f}M)입니다.
+    평균 객단가(영업 효율)가 가장 높은 곳은 <b>{reg_stats.loc[reg_stats['Per'].idxmax(), '지역']}</b>({reg_stats['Per'].max():.1f}M)입니다.
     </div>""", unsafe_allow_html=True)
 
     fig = px.scatter(reg_stats, x='Count', y='Per', size='Sales', color='지역', text='지역', 
@@ -277,7 +276,7 @@ def render_product_strategy(df):
     
     st.markdown("#### 3️⃣ 제품별 판매 시즌 집중도 (Seasonality)")
     st.markdown("""<div class="info-box">
-    <b>💡 분석 기준:</b> 각 제품의 월 매출을 해당 제품의 연간 최대 매출액(1.0) 대비 비율로 환산했습니다. <br>🟥 색이 진할수록 해당 월에 매출이 집중되는 <b>성수기</b>를 의미하며, 영업 캠페인 집중 시기로 권장합니다.
+    <b>💡 분석 기준:</b> 각 제품의 월 매출을 연간 최대 매출액(1.0) 대비 비율로 환산했습니다. <br>🟥 색이 진할수록 해당 제품의 판매량이 집중되는 <b>성수기</b>입니다.
     </div>""", unsafe_allow_html=True)
     season_pivot = df.pivot_table(index='제품명', columns='월', values='매출액', aggfunc='sum', fill_value=0)
     season_norm = season_pivot.div(season_pivot.max(axis=1), axis=0)
@@ -285,12 +284,12 @@ def render_product_strategy(df):
 
     with st.expander("🧩 **함께 팔기(Cross-selling) 기회 분석기**", expanded=True):
         st.markdown("""<div class="info-box">
-        <b>🎯 타겟 추출 기준:</b> Anchor 제품(이미 신뢰가 구축된 것)은 구매 중이지만, Target 제품(패키지 판매 제안)은 아직 한 번도 구매하지 않은 병원을 잠재 타겟으로 선정합니다.
+        <b>🎯 타겟 추출 기준:</b> Anchor 제품(기존 구매중) 사용처 중, Target 제품(패키지 제안)을 아직 한 번도 구매하지 않은 병원을 선정합니다.
         </div>""", unsafe_allow_html=True)
         col_sel1, col_sel2 = st.columns(2)
         all_prods = sorted(df['제품명'].unique())
-        with col_sel1: base_p = st.selectbox("이미 사용 중인 제품 (Anchor)", all_prods, index=0)
-        with col_sel2: target_p = st.selectbox("추가로 팔고 싶은 제품 (Target)", all_prods, index=min(1, len(all_prods)-1))
+        with col_sel1: base_p = st.selectbox("Anchor 제품 (이미 쓰는 것)", all_prods, index=0)
+        with col_sel2: target_p = st.selectbox("Target 제품 (팔고 싶은 것)", all_prods, index=min(1, len(all_prods)-1))
         if base_p != target_p:
             acc_A = set(df[df['제품명'] == base_p]['거래처명'].unique())
             acc_B = set(df[df['제품명'] == target_p]['거래처명'].unique())
@@ -301,10 +300,10 @@ def render_product_strategy(df):
                 if targets:
                     t_info = df[(df['거래처명'].isin(targets)) & (df['제품명'] == base_p)].groupby(['거래처명', '지역'])['매출액'].sum().reset_index().sort_values('매출액', ascending=False)
                     st.dataframe(t_info.head(50), column_config={"매출액": st.column_config.NumberColumn(f"{base_p} 구매액", format="%d 백만원")}, hide_index=True)
-                else: st.success("모든 고객이 이미 두 제품을 사용 중입니다.")
+                else: st.success("이미 모든 고객이 두 제품을 혼용 중입니다.")
 
 # --------------------------------------------------------------------------------
-# 4. 필터 및 실행
+# 4. 실행 및 필터링
 # --------------------------------------------------------------------------------
 DRIVE_FILE_ID = "1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr"
 df_raw = load_data_from_drive(DRIVE_FILE_ID)
@@ -326,6 +325,12 @@ if is_edit_mode:
         sel_months = st.multiselect("월", avail_m, default=[m for m in sel_months if m in avail_m])
         sel_cats = st.multiselect("제품군", sorted(df_raw['제품군'].unique()), default=sorted(df_raw['제품군'].unique()))
         sel_products = st.multiselect("제품명", sorted(df_raw['제품명'].unique()), default=sorted(df_raw['제품명'].unique()))
+        st.markdown("---")
+        if st.button("🔗 공유 링크 생성"):
+            base_url = "https://skbs-sales-2026-cbktkdtxsyrfzfrihefs2h.streamlit.app/" 
+            c_encoded = [urllib.parse.quote(val) for val in sel_channels]
+            p_string = f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(c_encoded)}&q={'&q='.join(map(str, sel_quarters))}&m={'&m='.join(map(str, sel_months))}"
+            st.code(base_url + p_string, language="text")
 else:
     sel_cats, sel_products = sorted(df_raw['제품군'].unique()), sorted(df_raw['제품명'].unique())
 
@@ -392,7 +397,7 @@ with tab2:
     cls_df = classify_customers(df_raw, sel_years[0])
     c_s1, c_s2 = st.columns([1, 2])
     with c_s1:
-        st.markdown('<p class="guide-text">💡 그룹을 선택하면 우측 진료과 비중과 하단 리스트가 업데이트됩니다.</p>', unsafe_allow_html=True)
+        st.markdown('<p class="guide-text">💡 그룹을 선택하면 우측 비중과 하단 리스트가 업데이트됩니다.</p>', unsafe_allow_html=True)
         st.dataframe(cls_df['상태'].value_counts().reset_index().rename(columns={'count':'거래처수'}), use_container_width=True)
         sel_st = st.selectbox("👇 분석할 그룹 선택", sorted(cls_df['상태'].unique()), key="p2_sel")
     with c_s2: st.plotly_chart(px.pie(cls_df[cls_df['상태'] == sel_st], names='진료과', title=f"'{sel_st}' 그룹 진료과 분포"), use_container_width=True)
@@ -400,25 +405,25 @@ with tab2:
     if len(event_cls.selection.rows) > 0:
         row_idx = cls_df[cls_df['상태'] == sel_st].sort_values('해당년도_매출', ascending=False).index[event_cls.selection.rows[0]]
         st.markdown("**🏥 상세 구매 이력 (최근 20건)**")
-        st.dataframe(df_raw[df_raw['사업자번호'] == row_idx].sort_values('매출일자', ascending=False).head(20)[#매출일자, #제품명, #매출액, #수량].style.format({'매출액': '{:,.1f}백만원'}), use_container_width=True)
+        st.dataframe(df_raw[df_raw['사업자번호'] == row_idx].sort_values('매출일자', ascending=False).head(20)[['매출일자', '제품명', '매출액', '수량']].style.format({'매출액': '{:,.1f}백만원'}), use_container_width=True)
 
 with tab3:
     render_winback_quality(df_raw, sel_years[0])
     st.markdown("---")
     st.markdown("### 🔄 기존 재유입 실적 및 이탈 전 패턴")
-    st.markdown('<p class="guide-text">💡 아래 리스트의 행을 클릭하면 해당 제품으로 복귀한 고객들의 과거 패턴을 확인합니다.</p>', unsafe_allow_html=True)
+    st.markdown('<p class="guide-text">💡 제품명을 클릭하면 해당 제품으로 복귀한 고객의 이탈 전 사용 제품을 확인합니다.</p>', unsafe_allow_html=True)
     df_f = df_raw.sort_values(['사업자번호', '매출일자']).copy()
     df_f['이전_제품'] = df_f.groupby('사업자번호')['제품명'].shift(1)
     df_f['구매간격'] = (df_f['매출일자'] - df_f.groupby('사업자번호')['매출일자'].shift(1)).dt.days
     res = df_final.merge(df_f[['사업자번호', '매출일자', '이전_제품', '구매간격']], on=['사업자번호', '매출일자'], how='left')
     res = res[res['구매간격'] >= 90]
     if not res.empty:
-        st.plotly_chart(px.pie(res, values='매출액', names='제품명', title="재유입 매출 기여 제품 비중"), use_container_width=True)
+        st.plotly_chart(px.pie(res, values='매출액', names='제품명', title="재유입 매출 기여 비중"), use_container_width=True)
         res_sum = res.groupby('제품명').agg({'사업자번호': 'nunique', '매출액': 'sum'}).reset_index().rename(columns={'사업자번호': '재유입처수', '매출액': '총_재유입매출'}).sort_values('재유입처수', ascending=False)
         ev_res = st.dataframe(res_sum.style.format({'총_재유입매출': '{:,.1f}백만원'}), use_container_width=True, on_select="rerun", selection_mode="single-row")
         if len(ev_res.selection.rows) > 0:
             s_p = res_sum.iloc[ev_res.selection.rows[0]]['제품명']
-            st.plotly_chart(px.bar(res[res['제품명'] == s_p].groupby('이전_제품').size().reset_index(name='count').sort_values('count', ascending=False).head(10), x='count', y='이전_제품', orientation='h', title=f"[{s_p}]로 복귀한 고객들의 과거 주력 제품"), use_container_width=True)
+            st.plotly_chart(px.bar(res[res['제품명'] == s_p].groupby('이전_제품').size().reset_index(name='count').sort_values('count', ascending=False).head(10), x='count', y='이전_제품', orientation='h', title=f"[{s_p}]로 복귀한 고객들이 과거에 썼던 제품"), use_container_width=True)
     else: st.info("선택한 조건에서 재유입 데이터가 없습니다.")
 
 with tab4:
@@ -432,7 +437,8 @@ with tab4:
         st.dataframe(reg_s[['지역', '매출액', '구매처수']].style.format({'매출액': '{:,.0f}백만원'}), use_container_width=True)
         sel_reg = st.selectbox("🔎 분석할 지역 선택", reg_s['지역'].unique(), key="p4_reg_orig")
     with c_r2:
-        if sel_reg: st.plotly_chart(px.pie(df_final[df_final['지역'] == sel_reg], values='매출액', names='제품명', hole=0.3, title=f"[{sel_reg}] 제품 비중"), use_container_width=True)
+        if sel_reg:
+            st.plotly_chart(px.pie(df_final[df_final['지역'] == sel_reg], values='매출액', names='제품명', hole=0.3, title=f"[{sel_reg}] 제품 비중"), use_container_width=True)
     if sel_reg:
         st.markdown(f"**🏠 [{sel_reg}] 상위 매출 거래처 리스트**")
         r_agg = df_final[df_final['지역'] == sel_reg].groupby(['거래처명', '제품명']).agg({'매출액': 'sum', '수량': 'sum'}).reset_index().sort_values('매출액', ascending=False).head(50)
