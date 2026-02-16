@@ -4,11 +4,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import urllib.parse
 import numpy as np
-import requests # 👈 파일을 강제로 가져오기 위한 핵심 라이브러리
-import io       # 👈 메모리에서 파일을 열기 위한 도구
+import requests
+import io
 
 # --------------------------------------------------------------------------------
-# 1. 페이지 설정 및 권한 제어
+# 1. 페이지 설정
 # --------------------------------------------------------------------------------
 st.set_page_config(page_title="SKBS Sales Report", layout="wide", initial_sidebar_state="expanded")
 
@@ -29,71 +29,88 @@ st.markdown("""
 st.title("📊 SKBS Sales Report")
 
 # --------------------------------------------------------------------------------
-# 2. 데이터 로드 (바이러스 경고 무시 & 강제 다운로드 기능 탑재)
+# 2. 데이터 로드 (핵심: 강제 다운로드 + 헤더 위치 자동 찾기)
 # --------------------------------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_data_from_drive(file_id):
-    # 1. 일반 다운로드 링크
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     
     try:
-        # requests로 파일 요청 (세션 사용으로 쿠키 유지)
+        # [1단계] 파일 강제 다운로드 (requests 사용)
         session = requests.Session()
         response = session.get(url, stream=True)
         
-        # 2. '바이러스 검사 경고' 등으로 인해 바로 다운로드가 안 될 경우 처리
-        # (구글은 큰 파일의 경우 확인 토큰을 요구함)
+        # 구글 드라이브 대용량 파일 경고(쿠키) 처리
         token = None
         for key, value in response.cookies.items():
             if key.startswith('download_warning'):
                 token = value
                 break
-        
         if token:
-            # 경고 무시하고 다시 요청
             url = f"https://drive.google.com/uc?export=download&confirm={token}&id={file_id}"
             response = session.get(url, stream=True)
             
-        # 3. 상태 코드 확인
         if response.status_code != 200:
-            st.error(f"❌ 구글 드라이브 연결 실패 (Status Code: {response.status_code})")
+            st.error(f"❌ 다운로드 실패 (Status Code: {response.status_code})")
             return pd.DataFrame()
 
-        # 4. 엑셀 파일로 변환 (메모리에 있는 내용을 바로 읽음)
+        # [2단계] '매출일자'가 있는 진짜 헤더 행(Row) 찾기
+        file_bytes = io.BytesIO(response.content)
+        
+        # 일단 처음 20줄만 읽어서 탐색
         try:
-            df = pd.read_excel(io.BytesIO(response.content), engine='openpyxl')
+            df_preview = pd.read_excel(file_bytes, header=None, nrows=20, engine='openpyxl')
         except:
-            # 혹시 구글 시트 포맷이면 csv로 올 수도 있으므로 대비
-            try:
-                df = pd.read_csv(io.BytesIO(response.content))
-            except:
-                st.error("❌ 파일은 가져왔으나 엑셀 형식이 아닙니다. (HTML 페이지일 가능성 높음)")
-                return pd.DataFrame()
+            # 엑셀이 아니면 CSV로 재시도
+            file_bytes.seek(0)
+            df_preview = pd.read_csv(file_bytes, header=None, nrows=20, encoding='cp949')
+
+        target_keyword = "매출일자"
+        header_row_index = 0
+        found_header = False
+        
+        for idx, row in df_preview.iterrows():
+            # 행 전체를 문자열로 변환 후 공백 제거해서 검색
+            row_str = row.astype(str).str.replace(" ", "").values
+            if any(target_keyword in str(x) for x in row_str):
+                header_row_index = idx
+                found_header = True
+                break
+        
+        if not found_header:
+            st.warning("⚠️ '매출일자' 컬럼을 자동으로 찾지 못했습니다. 첫 번째 줄을 제목으로 가정합니다.")
+
+        # [3단계] 진짜 헤더 위치부터 다시 읽기
+        file_bytes.seek(0)
+        try:
+            df = pd.read_excel(file_bytes, header=header_row_index, engine='openpyxl')
+        except:
+            file_bytes.seek(0)
+            df = pd.read_csv(file_bytes, header=header_row_index, encoding='cp949')
 
     except Exception as e:
-        st.error(f"❌ 데이터 로드 중 오류: {e}")
+        st.error(f"❌ 파일 읽기 오류: {e}")
         return pd.DataFrame()
 
     # ------------------------------------------------------
-    # 전처리 시작 (이미지 기반 컬럼명 완벽 대응)
+    # 전처리 (컬럼 매핑 및 정리)
     # ------------------------------------------------------
     df.columns = df.columns.astype(str).str.strip()
     
     col_map = {
         '매출일자': ['매출일자', '날짜', 'Date', '일자'],
-        '제품명': ['제품명 변환', '제 품 명', '제품명', '품목명'], # '제품명 변환'이 1순위
+        '제품명': ['제품명 변환', '제 품 명', '제품명', '품목명'],
         '합계금액': ['합계금액', '공급가액', '금액', '매출액'],
-        '수량': ['수 량', '수량', 'Qty'], # [중요] 띄어쓰기 있는 '수 량' 대응
+        '수량': ['수 량', '수량', 'Qty'],
         '사업자번호': ['사업자번호', '사업자등록번호', 'Biz No'],
         '거래처명': ['거래처명', '병원명', '요양기관명'],
         '진료과': ['진료과', '진료과목'],
         '제품군': ['제품군', '카테고리'],
         '거래처그룹': ['거래처그룹', '그룹', '판매채널'],
-        '주소': ['도로명주소', '주소', '사업장주소', '지번주소'], # [중요] '도로명주소' 대응
+        '주소': ['도로명주소', '주소', '사업장주소', '지번주소'],
         '지역': ['지역', '시도']
     }
     
-    # 컬럼 찾기 (공백 무시하고 매핑)
     current_cols = {c.replace(' ', ''): c for c in df.columns}
     for std_col, candidates in col_map.items():
         if std_col in df.columns: continue
@@ -106,11 +123,9 @@ def load_data_from_drive(file_id):
             if std_col in df.columns: break
 
     try:
-        # (1) '도로명주소' -> '지역' 자동 생성
+        # 지역 자동 생성 (주소 기반)
         if '지역' not in df.columns and '주소' in df.columns:
-            # "충청남도 아산시..." -> "충청남도"만 추출
             df['지역_임시'] = df['주소'].astype(str).str.split().str[0]
-            
             addr_map = {
                 '서울': '서울', '서울시': '서울', '서울특별시': '서울',
                 '경기': '경기', '경기도': '경기',
@@ -135,9 +150,9 @@ def load_data_from_drive(file_id):
         elif '지역' not in df.columns:
              df['지역'] = '미분류'
 
-        # (2) 날짜 변환 (방탄 처리)
+        # 날짜 변환
         if '매출일자' in df.columns:
-            df['매출일자'] = pd.to_datetime(df['매출일자'], errors='coerce') 
+            df['매출일자'] = pd.to_datetime(df['매출일자'], errors='coerce')
             df = df.dropna(subset=['매출일자'])
             df = df.sort_values('매출일자')
             df['년'] = df['매출일자'].dt.year
@@ -145,27 +160,21 @@ def load_data_from_drive(file_id):
             df['월'] = df['매출일자'].dt.month
             df['년월'] = df['매출일자'].dt.strftime('%Y-%m')
         else:
-            # 날짜 없으면 임시 날짜 (앱 꺼짐 방지)
-            st.warning("⚠️ '매출일자' 컬럼이 없어 임시 날짜(2024-01-01)를 사용합니다.")
+            # 비상용 날짜 생성
             df['매출일자'] = pd.to_datetime('2024-01-01')
-            df['년'] = 2024
-            df['분기'] = 1
-            df['월'] = 1
-            df['년월'] = '2024-01'
-        
-        # (3) 괄호 제거
+            df['년'] = 2024; df['분기'] = 1; df['월'] = 1; df['년월'] = '2024-01'
+
+        # 기타 컬럼 정리
         if '제품명' in df.columns:
             df['제품명'] = df['제품명'].astype(str).str.replace(r'\(.*?\)', '', regex=True).str.strip()
         else: df['제품명'] = '미분류'
             
-        # (4) 숫자 변환
         for col in ['합계금액', '수량']:
             if col not in df.columns: df[col] = 0
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-        df['매출액'] = df['합계금액'] / 1000000 # 백만 원 단위
+        df['매출액'] = df['합계금액'] / 1000000
         
-        # (5) 채널 분류
         def classify_channel(group):
             online_list = ['B2B', 'B2B(W)', 'SAP', '의사회원']
             return 'online'if group in online_list else ('offline' if group == 'SDP' else '기타')
@@ -174,17 +183,15 @@ def load_data_from_drive(file_id):
             df['판매채널'] = df['거래처그룹'].apply(classify_channel)
         else: df['판매채널'] = '기타'
         
-        # 기타 문자열 빈값 처리
         str_cols = ['거래처명', '거래처그룹', '제품군', '진료과', '지역']
         for col in str_cols:
             if col not in df.columns: df[col] = '미분류'
             df[col] = df[col].astype(str).replace('nan', '미분류')
             
-        if '사업자번호' not in df.columns:
-             df['사업자번호'] = df['거래처명']
+        if '사업자번호' not in df.columns: df['사업자번호'] = df['거래처명']
              
     except Exception as e:
-        st.error(f"❌ 데이터 전처리 중 오류 발생: {e}")
+        st.error(f"❌ 데이터 전처리 오류: {e}")
         return pd.DataFrame()
         
     return df
@@ -202,25 +209,20 @@ def classify_customers(df, target_year):
     for biz_no in base_info.index:
         has_ty = (target_year in cust_year.columns) and (cust_year.loc[biz_no, target_year] > 0)
         has_t1 = (target_year - 1 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 1] > 0)
-        has_t2 = (target_year - 2 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 2] > 0)
-        has_t3 = (target_year - 3 in cust_year.columns) and (cust_year.loc[biz_no, target_year - 3] > 0)
         past_years = [y for y in cust_year.columns if y < target_year - 1]
         has_history = cust_year.loc[biz_no, past_years].sum() > 0 if past_years else False
         
         if has_ty:
             if has_t1: status = "✅ 기존 (유지)"
-            else: status = "🔄 재유입 (복귀)" if (has_history or has_t2 or has_t3) else "🆕 신규 (New)"
+            else: status = "🔄 재유입 (복귀)" if has_history else "🆕 신규 (New)"
         else:
-            if has_t1: status = "📉 1년 이탈 (최근)"
-            elif has_t2: status = "📉 2년 연속 이탈"
-            elif has_t3: status = "📉 3년 연속 이탈"
-            else: status = "💤 장기 이탈 (4년+)"
+            status = "📉 이탈"
         classification[biz_no] = status
     base_info['상태'] = base_info.index.map(classification)
     return base_info
 
 # --------------------------------------------------------------------------------
-# 📊 [Executive] 임원 보고용 종합 오버뷰
+# 📊 [Executive] 임원 보고용 스마트 오버뷰
 # --------------------------------------------------------------------------------
 def render_smart_overview(df_curr, df_raw):
     if df_curr.empty: return
@@ -360,12 +362,11 @@ def render_product_strategy(df):
     st.plotly_chart(fig, use_container_width=True)
 
 # --------------------------------------------------------------------------------
-# 3. 필터 및 메인 로직
+# 3. 메인 실행 및 필터
 # --------------------------------------------------------------------------------
 try:
     DRIVE_FILE_ID = st.secrets["DRIVE_FILE_ID"]
 except:
-    # 👇 새 파일 ID를 여기에 넣으세요!
     DRIVE_FILE_ID = "1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr" 
 
 df_raw = load_data_from_drive(DRIVE_FILE_ID)
@@ -428,7 +429,6 @@ with tab2:
     render_advanced_insights(df_final, "거래처 분석")
     st.markdown("### 🏆 VIP 리스트")
     if not df_final.empty:
-        # 가독성을 위해 applymap을 괄호로 감싸서 들여쓰기 에러 방지
         vip = (
             df_final.groupby(['거래처명','진료과'])
             .agg({'매출액':'sum'})
