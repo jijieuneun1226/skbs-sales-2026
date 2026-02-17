@@ -40,7 +40,7 @@ def get_p(key, default, df_full=None, col=None):
     return res
 
 # --------------------------------------------------------------------------------
-# 2. 데이터 로드 및 전처리 (멀티 시트 로드 로직 포함)
+# 2. 데이터 로드 및 전처리 (시트명 'SKBS' 고정 및 멀티 시트 대응)
 # --------------------------------------------------------------------------------
 @st.cache_data(ttl=3600, max_entries=2)
 def load_data_from_drive(file_id):
@@ -111,7 +111,7 @@ def load_data_from_drive(file_id):
     return df, brand_data
 
 # --------------------------------------------------------------------------------
-# 3. 분석 함수 정의 (원본 1~5 함수 내용 100% 동일)
+# 3. 분석 함수 정의 (기존 탭 1~5번 함수 100% 동일 원복)
 # --------------------------------------------------------------------------------
 def render_smart_overview(df_curr, df_raw):
     if df_curr.empty: return
@@ -204,7 +204,7 @@ def render_product_strategy(df):
     p_stats = df.groupby('제품명').agg(Sales=('매출액', 'sum'), Count=('사업자번호', 'nunique')).reset_index()
     p_stats['Bubble_Size'] = p_stats['Sales'].apply(lambda x: max(x, 0.1))
     c1, c2 = st.columns(2)
-    with c1: st.plotly_chart(px.scatter(p_stats, x='Count', y='Sales', size='Bubble_Size', color='제품명', text='제품명', title="제품 BCG 매트릭스"), use_container_width=True)
+    with c1: st.plotly_chart(px.scatter(p_stats, x='Count', y='Sales', size='Bubble_Size', color='제품명', text='제품명', title="BCG 매트릭스"), use_container_width=True)
     with c2: st.plotly_chart(px.bar(p_stats.sort_values('Count'), x=(p_stats['Count'] / df['사업자번호'].nunique() * 100), y='제품명', orientation='h', text_auto='.1f', title="시장 침투율 (%)"), use_container_width=True)
     st.markdown("#### 📅 제품별 판매 시즌 집중도 (Seasonality)")
     season_pivot = df.pivot_table(index='제품명', columns='월', values='매출액', aggfunc='sum', fill_value=0)
@@ -233,7 +233,7 @@ def classify_customers(df, target_year):
     return base_info
 
 # --------------------------------------------------------------------------------
-# [추가] 🏠 6. 브랜드관 성과 분석 (디자인 완벽 보완)
+# [추가] 🏠 6. 브랜드관 성과 분석 (사용자 디자인 요청 완벽 반영)
 # --------------------------------------------------------------------------------
 def render_brand_store_analysis(brand_data, sel_years, df_raw):
     st.markdown("### 🏠 브랜드관 성과 및 마케팅 효용성 분석")
@@ -241,7 +241,7 @@ def render_brand_store_analysis(brand_data, sel_years, df_raw):
     if not brand_data or brand_data['Brand_Total'].empty:
         st.warning("🏠 브랜드관 분석 데이터가 없습니다."); return
 
-    # 제품명 매핑 및 필터링
+    # 제품명 매핑 (Brand -> Sales 로우데이터 명칭)
     valid_p = df_raw['제품명'].unique()
     def map_p(n):
         c = str(n).replace('[SK]', '').replace('주', '').replace('0.5ml', '').strip()
@@ -260,7 +260,7 @@ def render_brand_store_analysis(brand_data, sel_years, df_raw):
     df_m = brand_data['Brand_Monthly'].copy()
     if not df_m.empty: df_m = df_m[df_m['월'].str.startswith(str(target_year))]
 
-    # 주요 지표
+    # 주요 지표 계산
     uv = df_t['UV'].sum() if not df_t.empty else 0
     pv = df_t['PV'].sum() if not df_t.empty else 0
     sales_m = df_d['매출_백만'].sum() if not df_d.empty else 0
@@ -269,7 +269,7 @@ def render_brand_store_analysis(brand_data, sel_years, df_raw):
 
     # Summary 섹션 (1번 탭 디자인 이식)
     st.markdown(f"### 🚀 브랜드관 성과 Summary ({target_year}년)")
-    st.markdown("""<div class="info-box"><b>💡 분석 지표 기준:</b> 브랜드관 페이지 유입 고객의 활동성과 실제 구매 전환(당일 결제)을 분석합니다.</div>""", unsafe_allow_html=True)
+    st.markdown("""<div class="info-box"><b>💡 분석 지표 기준:</b> 브랜드관 페이지 유입 회원의 활동성과 실제 구매 전환(당일 결제)을 분석합니다.</div>""", unsafe_allow_html=True)
     with st.container(border=True):
         c1, c2, c3 = st.columns([1.2, 1, 1.2])
         with c1:
@@ -282,11 +282,11 @@ def render_brand_store_analysis(brand_data, sel_years, df_raw):
             st.metric("💳 평균 객단가 (ATV)", f"{atv:,.0f} 원")
             st.write(f"누적 페이지뷰: **{pv:,} PV**")
 
-    # 총괄 성과 표
+    # 운영 총괄 성과 표
     st.markdown("#### 📊 브랜드관 운영 총괄 성과")
     st.table(pd.DataFrame({"구분": ["UV (방문자수)", "브랜드관 전환 매출액", "구매 전환 처수", "객단가 (ATV)"], "성과 지표": [f"{uv:,} 명", f"{sales_m:,.1f} 백만원", f"{count:,} 처", f"{atv:,.0f} 원"]}))
 
-    # 차트 섹션
+    # 차트 섹션 (월별 추이 + 진료과 비중)
     col_l, col_r = st.columns([1.5, 1])
     with col_l:
         st.markdown("#### 📅 월별 유입 및 관심도 추이")
@@ -325,11 +325,13 @@ if is_edit_mode:
         sel_months = st.multiselect("월", avail_m, default=[m for m in sel_months if m in avail_m])
         sel_cats = st.multiselect("제품군", sorted(df_raw['제품군'].unique()), default=sel_cats)
         sel_products = st.multiselect("제품명", sorted(df_raw['제품명'].unique()), default=sel_products)
-        if st.button("🔗 공유 링크 생성"):
+        if st.button("🔗 뷰어용 공유 링크 생성"):
             base_url = "https://skbs-sales-2026-cbktkdtxsyrfzfrihefs2h.streamlit.app/" 
             cat_p = "all" if len(sel_cats) == len(df_raw['제품군'].unique()) else "&cat=".join([urllib.parse.quote(v) for v in sel_cats])
             prod_p = "all" if len(sel_products) == len(df_raw['제품명'].unique()) else "&prod=".join([urllib.parse.quote(v) for v in sel_products])
-            st.code(base_url + f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(sel_channels)}&q={'&q='.join(map(str, sel_quarters))}&m={'&m='.join(map(str, sel_months))}&cat={cat_p}&prod={prod_p}")
+            p_string = (f"?y={'&y='.join(map(str, sel_years))}&c={'&c='.join(sel_channels)}&q={'&q='.join(map(str, sel_quarters))}"
+                        f"&m={'&m='.join(map(str, sel_months))}&cat={cat_p}&prod={prod_p}")
+            st.success("공유 링크 생성!"); st.code(base_url + p_string, language="text")
 
 df_final = df_raw[(df_raw['년'].isin(sel_years)) & (df_raw['판매채널'].isin(sel_channels)) & (df_raw['분기'].isin(sel_quarters)) & (df_raw['월'].isin(sel_months)) & (df_raw['제품군'].isin(sel_cats)) & (df_raw['제품명'].isin(sel_products))]
 
@@ -362,11 +364,9 @@ with tab2:
         cur_d = df_raw['매출일자'].max()
         risk_cnt = len(ranking_v[(cur_d - ranking_v['최근구매일']).dt.days >= 90])
         top_v = ranking_v.iloc[0]
-        dept_sum = df_final.groupby('진료과')['매출액'].sum().sort_values(ascending=False)
         st.subheader("✔️ Summary")
         st.write(f"• 상위 100처 매출 합계: **{ranking_v['매출액'].sum()/100:,.1f}억원** (전체 매출의 {(ranking_v['매출액'].sum()/df_final['매출액'].sum()*100):.1f}% 차지)")
         st.write(f"• 거래처 상태 분포: **기존({st_c.get('✅ 기존 (유지)',0)}처), 신규({st_c.get('🆕 신규 (New)',0)}처), 이탈({st_c.get('📉 이탈',0)}처)**")
-        st.write(f"• 최고 매출 거래처: **{top_v['거래처명']}** ({top_v['매출액']:,.1f} 백만원)")
         st.subheader("✔️ Insight")
         st.write(f"• **VIP 이탈 위험 알림:** 현재 상위 100처 중 **{risk_cnt}처**가 90일 이상 구매가 없습니다. 특히 **{top_v['거래처명']}**의 관리가 시급합니다.")
         st.markdown("---")
@@ -390,7 +390,7 @@ with tab2:
 with tab3: render_winback_quality(df_final, df_raw, sel_years[0])
 with tab4: render_regional_deep_dive(df_final)
 with tab5:
-    p_stats_v5 = df_final.groupby('제품명').agg(Sales=('매출액', 'sum')).reset_index().sort_values('Sales', ascending=False)
+    p_stats_v5 = df_final.groupby('제품명').agg(Sales=('매출액', 'sum'), Qty=('수량', 'sum'), Count=('사업자번호', 'nunique')).reset_index().sort_values('Sales', ascending=False)
     st.markdown("### 📦 제품별 판매 현황")
     c_p1, c_p2 = st.columns(2)
     with c_p1: st.plotly_chart(px.bar(p_stats_v5, x='Sales', y='제품명', orientation='h', title="제품별 매출 현황", color='Sales'), use_container_width=True)
@@ -402,4 +402,5 @@ with tab5:
         sel_p_v = p_main_v.iloc[ev_p_v.selection.rows[0]]['제품명']
         st.dataframe(df_final[df_final['제품명'] == sel_p_v].groupby('거래처명').agg({'매출액': 'sum'}).reset_index().sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
 
-with tab6: render_brand_store_analysis(brand_data_dict, sel_years, df_raw)
+with tab6:
+    render_brand_store_analysis(brand_data_dict, sel_years, df_raw)
