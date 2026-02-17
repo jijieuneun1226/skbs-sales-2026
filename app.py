@@ -347,13 +347,13 @@ df_final = df_raw[
 # --------------------------------------------------------------------------------
 # 5. 메인 탭 구성
 # --------------------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 1. Overview", "🏆 2. VIP & 이탈 관리", "🔄 3. 재유입 패턴 분석", "🗺️ 4. 지역 분석", "📦 5. 제품 분석"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 1. Overview", "🏆 2. 매출 상위 거래처 & 이탈 관리", "🔄 3. 재유입 분석", "🗺️ 4. 지역 분석", "📦 5. 제품 분석"])
 
 with tab1:
     render_smart_overview(df_final, df_raw)
     st.markdown("---")
     with st.container(border=True):
-        st.markdown("### 📈 성과 요약")
+        st.markdown("### 📈 년도/분기 현황 요약")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("총 매출액 (년도)", f"{df_raw[df_raw['년'].isin(sel_years)]['매출액'].sum():,.0f} 백만원")
         c2.metric("총 구매처수 (년도)", f"{df_raw[df_raw['년'].isin(sel_years)]['사업자번호'].nunique():,} 처")
@@ -367,12 +367,12 @@ with tab1:
             st.plotly_chart(px.bar(monthly_b, x='년월', y='매출액', text_auto='.1f', title="월별 매출 추이", color_discrete_sequence=['#a8dadc']), use_container_width=True)
 
 with tab2:
-    st.markdown("### 🏆 VIP 관리 및 거래처 분류 상세 분석")
+    st.markdown("### 🏆 상위 거래처 및 거래처 분류 상세 분석")
     st.markdown("""<div class="info-box">
-    🆕 <b>신규:</b> 최초구매 / ✅ <b>기존:</b> 연속구매 / 🔄 <b>재유입:</b> 공백 후 복귀 / 📉 <b>이탈:</b> 기간 내 구매 부재<br>
+    🆕 <b>신규:</b> 최초구매 / ✅ <b>기존:</b> 연속구매 / 🔄 <b>재유입:</b> 전년도 미구매,올해 구매 / 📉 <b>이탈:</b> 기간 내 구매 부재<br>
     ※ <b>VIP 상태 정의:</b> 최근 구매일로부터 90일 이내면 <b>'✅ 정상'</b>, 90일 초과 시 <b>'🚨 이탈위험'</b>으로 분류
     </div>""", unsafe_allow_html=True)
-    with st.expander("🥇 매출 상위 거래처 (VIP) Top 100", expanded=True):
+    with st.expander("🥇 매출 상위 거래처 Top 100", expanded=True):
         st.markdown('<p class="guide-text">💡 아래 표에서 행을 클릭하면 하단에 상세 실적이 표시됩니다.</p>', unsafe_allow_html=True)
         if not df_final.empty:
             ranking = df_final.groupby(['사업자번호', '거래처명', '진료과']).agg({'매출액': 'sum', '수량': 'sum'}).reset_index()
@@ -409,7 +409,7 @@ with tab2:
 with tab3:
     render_winback_quality(df_final, df_raw, sel_years[0])
     st.markdown("---")
-    st.markdown("### 🔄 재유입 기여 비중 및 이탈 전 구매 패턴")
+    st.markdown("### 🔄 재유입 기여 비중 및 이탈 전 구매 품목")
     df_f = df_raw.sort_values(['사업자번호', '매출일자']).copy()
     df_f['이전_제품'] = df_f.groupby('사업자번호')['제품명'].shift(1)
     df_f['구매간격'] = (df_f['매출일자'] - df_f.groupby('사업자번호')['매출일자'].shift(1)).dt.days
@@ -454,3 +454,4 @@ with tab5:
         sel_p_name = p_main.iloc[ev_p.selection.rows[0]]['제품명']
         p_detail = df_final[df_final['제품명'] == sel_p_name].groupby('거래처명').agg({'매출액': 'sum'}).reset_index().sort_values('매출액', ascending=False)
         st.dataframe(p_detail.style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
+
