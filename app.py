@@ -47,6 +47,7 @@ def get_p(key, default, df_full=None, col=None):
 def load_data_from_drive(file_id):
     initial_url = f"https://drive.google.com/uc?export=download&id={file_id}"
     session = requests.Session()
+    brand_data = {}
     try:
         response = session.get(initial_url, stream=True)
         if "text/html" in response.headers.get("Content-Type", "").lower():
@@ -58,11 +59,25 @@ def load_data_from_drive(file_id):
                 real_download_url = match_action.group(1).replace("&amp;", "&")
                 response = session.get(real_download_url, params=params_dict, stream=True)
         
-        if response.status_code != 200: return pd.DataFrame()
+        if response.status_code != 200: return pd.DataFrame(), {}
         file_bytes = io.BytesIO(response.content)
-        df = pd.read_excel(file_bytes, engine='openpyxl')
+        
+        # [수정] 여러 시트를 읽기 위해 ExcelFile 사용
+        xls = pd.ExcelFile(file_bytes, engine='openpyxl')
+        sheets = xls.sheet_names
+        
+        # 매출 로우 데이터 로드
+        df = pd.read_excel(xls, sheet_name='Sales_Data' if 'Sales_Data' in sheets else 0)
+        
+        # 브랜드관 분석 데이터 로드
+        for sn in ['Brand_Monthly', 'Brand_Total', 'Brand_Direct_Sales', 'Brand_Competitor']:
+            if sn in sheets:
+                brand_data[sn] = pd.read_excel(xls, sheet_name=sn)
+            else:
+                brand_data[sn] = pd.DataFrame()
+                
     except Exception as e:
-        st.error(f"❌ 로드 오류: {e}"); return pd.DataFrame()
+        st.error(f"❌ 로드 오류: {e}"); return pd.DataFrame(), {}
 
     df.columns = [re.sub(r'\s+', '', str(c)) for c in df.columns]
     
@@ -115,8 +130,8 @@ def load_data_from_drive(file_id):
         if '제품명' in df.columns:
             df['제품명'] = df['제품명'].str.replace(r'\(.*?\)', '', regex=True).str.strip()
     except Exception as e:
-        st.error(f"❌ 전처리 오류: {e}"); return pd.DataFrame()
-    return df
+        st.error(f"❌ 전처리 오류: {e}"); return pd.DataFrame(), {}
+    return df, brand_data
 
 # --------------------------------------------------------------------------------
 # 3. [SK분석 기본 폼] 분석 함수 정의
@@ -310,11 +325,73 @@ def classify_customers(df, target_year):
     base_info['상태'] = base_info.index.map(classification)
     return base_info
 
+# [추가] 🏠 6. 브랜드관 성과 분석 함수
+def render_brand_store_analysis(brand_data):
+    st.markdown("### 🏠 브랜드관 성과 및 마케팅 효용성 분석")
+    st.markdown("""<div class="info-box">
+    <b>🎯 분석 목적:</b> 브랜드관 페이지 유입 회원의 활동성과 실제 구매 전환 여부를 분석하여 마케팅 효용성을 측정합니다.<br>
+    <b>📈 분석 기준:</b> 브랜드관 접속 후 당일 발생한 구매 실적을 '직접 전환'으로 집계합니다.
+    </div>""", unsafe_allow_html=True)
+
+    if not brand_data or brand_data['Brand_Total'].empty:
+        st.warning("⚠️ 브랜드관 분석 시트(Brand_Total 등)가 데이터에 존재하지 않습니다."); return
+
+    # 1. 상단 주요 지표 (Brand_Total 기반)
+    total_df = brand_data['Brand_Total']
+    total_uv = total_df['UV'].iloc[0]
+    total_pv = total_df['PV'].iloc[0]
+    
+    # 구매 전환율 계산 (Brand_Direct_Sales 구매처수 / Total UV)
+    direct_df = brand_data['Brand_Direct_Sales']
+    purchasing_counts = direct_df['사업자번호'].nunique() if not direct_df.empty else 0
+    conv_rate = (purchasing_counts / total_uv * 100) if total_uv > 0 else 0
+
+    with st.container(border=True):
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("총 방문자(UV)", f"{total_uv:,} 명")
+        c2.metric("총 페이지뷰(PV)", f"{total_pv:,} 회")
+        c3.metric("구매 전환 고객", f"{purchasing_counts:,} 처")
+        c4.metric("최종 전환율", f"{conv_rate:.1f}%")
+
+    # 2. 월별 추이 분석 (Brand_Monthly 기반)
+    st.markdown("#### 📅 월별 브랜드관 유입 및 관심도 추이")
+    monthly_df = brand_data['Brand_Monthly']
+    fig_monthly = px.line(monthly_df, x='월', y=['UV', 'PV'], markers=True, 
+                          color_discrete_map={'UV': '#4e79a7', 'PV': '#e15759'},
+                          title="월별 방문자(UV) 및 페이지뷰(PV) 추이")
+    st.plotly_chart(fig_monthly, use_container_width=True)
+
+    # 3. 당일 구매 및 경쟁사 방어 분석
+    col_left, col_right = st.columns(2)
+    
+    with col_left:
+        st.markdown("#### 🛒 브랜드관 유입 후 당일 구매 품목 (Top 10)")
+        if not direct_df.empty:
+            item_rank = direct_df.groupby('상품명').agg({'매출': 'sum', '사업자번호': 'nunique'}).reset_index()
+            item_rank = item_rank.rename(columns={'사업자번호': '구매처수', '매출': '총매출(원)'}).sort_values('총매출(원)', ascending=False)
+            st.dataframe(item_rank.head(10).style.format({'총매출(원)': '{:,.0f}'}), use_container_width=True, hide_index=True)
+        else: st.info("당일 구매 데이터가 없습니다.")
+
+    with col_right:
+        st.markdown("#### 🛡️ 경쟁사 방어 분석 (타 브랜드 구매 비중)")
+        comp_df = brand_data['Brand_Competitor']
+        if not comp_df.empty:
+            fig_pie = px.pie(comp_df, values='매출', names='상품명', hole=0.4, 
+                             title="브랜드관 방문 고객이 선택한 타 브랜드 품목")
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else: st.info("타 브랜드 구매 데이터가 없습니다.")
+
+    # 4. 상세 리스트
+    with st.expander("🔎 타 브랜드 구매 상세 리스트 (이탈 방지 타겟용)", expanded=False):
+        if not comp_df.empty:
+            st.dataframe(comp_df[['병원명', '진료과', '상품명', '수량', '매출', '구매일']].sort_values('매출', ascending=False), 
+                         use_container_width=True, hide_index=True)
+
 # --------------------------------------------------------------------------------
 # 4. 필터 및 실행
 # --------------------------------------------------------------------------------
 DRIVE_FILE_ID = "1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr"
-df_raw = load_data_from_drive(DRIVE_FILE_ID)
+df_raw, brand_data_dict = load_data_from_drive(DRIVE_FILE_ID) # 수정: 브랜드 데이터 수신 추가
 if df_raw.empty: st.stop()
 
 # [수정 1 반영] URL 축약 대응 필터 로드
@@ -353,9 +430,9 @@ df_final = df_raw[
 ]
 
 # --------------------------------------------------------------------------------
-# 5. 메인 탭 구성
+# 5. 메인 탭 구성 (수정: 6번 탭 추가)
 # --------------------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 1. Overview", "🏆 2. 매출 상위 거래처 & 이탈 관리", "🔄 3. 재유입 분석", "🗺️ 4. 지역 분석", "📦 5. 제품 분석"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 1. Overview", "🏆 2. 매출 상위 거래처 & 이탈 관리", "🔄 3. 재유입 분석", "🗺️ 4. 지역 분석", "📦 5. 제품 분석", "🏠 6. 브랜드관 성과"])
 
 with tab1:
     render_smart_overview(df_final, df_raw)
@@ -540,7 +617,6 @@ with tab5:
             acc_B = set(df_final[df_final['제품명'] == p_stats.iloc[1]['제품명']]['거래처명'].unique())
             st.write(f"• **교차 판매 기회:** 주력 제품인 **{p_stats.iloc[0]['제품명']}** 사용처 중 **{p_stats.iloc[1]['제품명']}**를 쓰지 않는 타겟 **{len(acc_A - acc_B)}처**를 확보했습니다.")
 
-    # [수정사항 3 반영] 📦 제품별 판매 현황 제목 아래로 그래프 이동
     st.markdown("### 📦 제품별 판매 현황")
     c_p1, c_p2 = st.columns(2)
     with c_p1: st.plotly_chart(px.bar(p_stats, x='Sales', y='제품명', orientation='h', title="제품별 매출 현황", color='Sales'), use_container_width=True)
@@ -556,4 +632,6 @@ with tab5:
         sel_p_v = p_main_v.iloc[ev_p_v.selection.rows[0]]['제품명']
         st.dataframe(df_final[df_final['제품명'] == sel_p_v].groupby('거래처명').agg({'매출액': 'sum'}).reset_index().sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
 
-
+# [추가] 6번 탭 렌더링
+with tab6:
+    render_brand_store_analysis(brand_data_dict)
