@@ -365,8 +365,8 @@ with tab1:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("총 매출액 (년도)", f"{df_raw[df_raw['년'].isin(sel_years)]['매출액'].sum():,.0f} 백만원")
         c2.metric("총 구매처수 (년도)", f"{df_raw[df_raw['년'].isin(sel_years)]['사업자번호'].nunique():,} 처")
-        c3.metric("선택기간 매출액", f"{df_final['매출액'].sum():,.0f} 백만원")
-        c4.metric("선택기간 구매처수", f"{df_final['사업자번호'].nunique():,} 처")
+        c3.metric("분기 매출액", f"{df_final['매출액'].sum():,.0f} 백만원")
+        c4.metric("분 구매처수", f"{df_final['사업자번호'].nunique():,} 처")
         st.markdown("---")
         col_a, col_b = st.columns([1, 1.5])
         with col_a: st.plotly_chart(px.pie(df_final, values='매출액', names='진료과', hole=0.4, title="진료과별 매출 비중"), use_container_width=True)
@@ -401,7 +401,7 @@ with tab2:
 
     st.markdown("---")
     st.markdown("### 🏆 상위 거래처 및 거래처 분류 상세 분석")
-    st.markdown("""<div class="info-box">🆕 <b>신규:</b> 최초구매 / ✅ <b>기존:</b> 연속구매 / 🔄 <b>재유입:</b> 전년도 공백 후 복귀 / 📉 <b>이탈:</b> 기간 내 구매 부재</div>""", unsafe_allow_html=True)
+    st.markdown("""<div class="info-box">🆕 <b>신규:</b> 최초구매 / ✅ <b>기존:</b> 연속구매 / 🔄 <b>재유입:</b> 전년도 공백 후 복귀 / 📉 <b>이탈:</b> 기간 내 구매 부재 /🚨 <b>이탈위험:</b> 3개월간 구매 없음</div>""", unsafe_allow_html=True)
     with st.expander("🥇 매출 상위 거래처 Top 100", expanded=True):
         st.markdown('<p class="guide-text">💡 아래 표에서 행을 클릭하면 하단에 상세 실적이 표시됩니다.</p>', unsafe_allow_html=True)
         ranking_v['최근구매일_str'] = ranking_v['최근구매일'].dt.strftime('%Y-%m-%d')
@@ -415,6 +415,7 @@ with tab2:
     with c_s1:
         st.dataframe(cls_d['상태'].value_counts().reset_index().rename(columns={'count':'거래처수'}), use_container_width=True)
         sel_st = st.selectbox("👇 분석할 그룹 선택", sorted(cls_d['상태'].unique()), key="p2_sel")
+            st.markdown('<p class="guide-text">💡 행 클릭 시 상세 현황 표시</p>', unsafe_allow_html=True)
     with c_s2: st.plotly_chart(px.pie(cls_d[cls_d['상태'] == sel_st], names='진료과', title="진료과 분포"), use_container_width=True)
     display_cls = cls_d[cls_d['상태'] == sel_st].sort_values('해당년도_매출', ascending=False).copy()
     display_cls['최근구매일'] = display_cls['최근구매일'].dt.strftime('%Y-%m-%d')
@@ -459,6 +460,7 @@ with tab3:
     if not res.empty:
         col_p, col_t = st.columns([1, 1])
         with col_p: st.plotly_chart(px.pie(res, values='매출액', names='제품명', title="재유입 매출 기여 비중"), use_container_width=True)
+                st.markdown('<p class="guide-text">💡 행 클릭 시 상세 현황 표시</p>', unsafe_allow_html=True)
         with col_t:
             res_sum = res.groupby('제품명').agg({'사업자번호': 'nunique', '매출액': 'sum'}).reset_index().sort_values('사업자번호', ascending=False)
             ev_res = st.dataframe(res_sum.rename(columns={'사업자번호':'재유입처수', '매출액':'매출액(백만원)'}).style.format({'매출액(백만원)': '{:,.1f}'}), use_container_width=True, on_select="rerun", selection_mode="single-row")
@@ -553,3 +555,4 @@ with tab5:
     if len(ev_p_v.selection.rows) > 0:
         sel_p_v = p_main_v.iloc[ev_p_v.selection.rows[0]]['제품명']
         st.dataframe(df_final[df_final['제품명'] == sel_p_v].groupby('거래처명').agg({'매출액': 'sum'}).reset_index().sort_values('매출액', ascending=False).style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
+
