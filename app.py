@@ -489,8 +489,8 @@ with tab4:
         st.write(f"• 매출 변동: 전년 대비 **{inc_s['지역']} {inc_s['Sales_Pct']:+.1f}% 상승** / **{dec_s['지역']} {dec_s['Sales_Pct']:+.1f}% 하락**")
 
         risk_v = []
-        for r in df['지역'].unique():
-            r_df = df[df['지역'] == r]
+        for r in df_final['지역'].unique():
+            r_df = df_final[df_final['지역'] == r]
             risk_v.append({'지역': r, '의존도': (r_df.groupby('거래처명')['매출액'].sum().max() / r_df['매출액'].sum() * 100)})
         df_risk_v = pd.DataFrame(risk_v).sort_values('의존도', ascending=False)
         
