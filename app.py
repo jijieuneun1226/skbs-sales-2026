@@ -10,7 +10,7 @@ import re
 from datetime import timedelta
 
 # --------------------------------------------------------------------------------
-# 1. 페이지 설정 및 권한 제어 (SK분석 기본 폼 유지)
+# 1. 페이지 설정 및 권한 제어
 # --------------------------------------------------------------------------------
 st.set_page_config(page_title="SKBS Sales Report", layout="wide", initial_sidebar_state="expanded")
 
@@ -131,7 +131,7 @@ def render_smart_overview(df_curr, df_raw):
     cust_curr, cust_prev = set(df_curr['사업자번호']), set(df_prev['사업자번호'])
     new_cust, lost_cust, retained_cust = len(cust_curr - cust_prev), len(cust_prev - cust_curr), len(cust_curr & cust_prev)
 
-    st.markdown(f"### 🚀 {current_year}년 Executive Summary (vs {last_year})")
+    st.markdown(f"### 🚀 {current_year}년 Summary (vs {last_year})")
     with st.container(border=True):
         c1, c2, c3 = st.columns([1.2, 1, 1.2])
         with c1:
@@ -149,22 +149,25 @@ def render_smart_overview(df_curr, df_raw):
 def render_winback_quality(df_final, df_raw, current_year):
     st.markdown(f"### ♻️ {current_year}년 재유입 현황 분석")
     st.markdown("""<div class="info-box">
-    <b>🔍 재유입 정의:</b> 직전 구매일로부터 <b>최소 90일(3개월) 이상 공백기</b> 이후 다시 구매가 발생한 거래처 (선택 기간 내 첫 구매 기준)<br>
+    <b>🔍 재유입 정의:</b> 직전 구매일로부터 <b>최소 180일(6개월) 이상 공백기</b> 이후 다시 구매가 발생한 거래처 (선택 기간 내 첫 구매 기준)<br>
     <b>🚦 회복 퀄리티:</b> 과거 전성기(최고 매출) 대비 현재 매출 수준<br>
     - 🟢 <b>완전 회복:</b> 80% 이상 / 🟡 <b>회복 중:</b> 20~80% / 🔴 <b>재진입 초기:</b> 20% 미만<br>
     <b>📈 평균 회복률 뜻:</b> 재유입된 거래처들이 과거 가장 많이 구매했던 시기 대비 현재 평균적으로 몇 %까지 구매력이 회복되었는지를 나타냄
     </div>""", unsafe_allow_html=True)
 
+    # 재유입 로직: 180일 기준
     df_history = df_raw.sort_values(['사업자번호', '매출일자']).copy()
     df_history['구매간격'] = (df_history['매출일자'] - df_history.groupby('사업자번호')['매출일자'].shift(1)).dt.days
-    winback_data = df_history[(df_history['사업자번호'].isin(df_final['사업자번호'])) & (df_history['구매간격'] >= 90)].copy()
+    
+    # 선택된 기간(df_final) 내의 거래처 중 180일 공백 후 구매한 건 필터링
+    winback_data = df_history[(df_history['사업자번호'].isin(df_final['사업자번호'])) & (df_history['구매간격'] >= 180)].copy()
     winback_ids = winback_data['사업자번호'].unique()
     
     if len(winback_ids) == 0:
-        st.info("♻️ 해당 조건 내 재유입 데이터가 없습니다."); return
+        st.info("♻️ 해당 조건 내 재유입 데이터(6개월 공백 기준)가 없습니다."); return
 
-    sales_curr = df_final[df_final['사업자번호'].isin(winback_ids)].groupby(['거래처명', '지역'])['매출액'].sum()
-    sales_history = df_raw[df_raw['사업자번호'].isin(winback_ids)].groupby(['거래처명', '지역'])['매출액'].max()
+    sales_curr = df_final[df_final['사업자번호'].isin(winback_ids)].groupby(['사업자번호', '거래처명', '지역'])['매출액'].sum()
+    sales_history = df_raw[df_raw['사업자번호'].isin(winback_ids)].groupby(['사업자번호', '거래처명', '지역'])['매출액'].max()
     
     df_wb = pd.DataFrame(index=sales_curr.index)
     df_wb['올해매출'] = sales_curr
@@ -189,8 +192,28 @@ def render_winback_quality(df_final, df_raw, current_year):
             st.plotly_chart(fig, use_container_width=True)
         except: st.warning("차트 생성 불가")
     with col_li:
-        st.dataframe(df_wb[['상태', '거래처명', '올해매출', '회복률']], hide_index=True, use_container_width=True,
-                     column_config={"회복률": st.column_config.ProgressColumn("회복도", format="%.1f%%", min_value=0, max_value=100), "올해매출": st.column_config.NumberColumn(format="%.1f 백만원")})
+        st.markdown('<p class="guide-text">💡 리스트의 행을 클릭하면 하단에서 실제 공백 기간과 구매 이력을 확인할 수 있습니다.</p>', unsafe_allow_html=True)
+        event_wb = st.dataframe(df_wb[['상태', '거래처명', '올해매출', '회복률']], hide_index=True, use_container_width=True,
+                               on_select="rerun", selection_mode="single-row",
+                               column_config={"회복률": st.column_config.ProgressColumn("회복도", format="%.1f%%", min_value=0, max_value=100), "올해매출": st.column_config.NumberColumn(format="%.1f 백만원")})
+
+    # 탭 3 내부 상세 클릭 이벤트
+    if len(event_wb.selection.rows) > 0:
+        sel_idx = event_wb.selection.rows[0]
+        sel_biz_no = df_wb.iloc[sel_idx]['사업자번호']
+        sel_name = df_wb.iloc[sel_idx]['거래처명']
+        
+        st.markdown(f"#### 🔍 [{sel_name}] 실제 구매 간격 및 상세 내역")
+        
+        # 해당 거래처의 전체 히스토리 추출
+        detail_hist = df_history[df_history['사업자번호'] == sel_biz_no].sort_values('매출일자', ascending=False).copy()
+        detail_hist['매출일자_str'] = detail_hist['매출일자'].dt.strftime('%Y-%m-%d')
+        
+        # 공백 기간이 포함된 표 구성
+        st.dataframe(detail_hist[['매출일자_str', '제품명', '매출액', '수량', '구매간격']].rename(columns={'매출일자_str':'매출일자', '구매간격':'직전구매후공백(일)'})
+                     .style.applymap(lambda v: 'background-color: #ffcccc; font-weight: bold;' if isinstance(v, (int, float)) and v >= 180 else '', subset=['직전구매후공백(일)'])
+                     .format({'매출액': '{:,.1f} 백만원', '직전구매후공백(일)': '{:,.0f} 일'}), 
+                     use_container_width=True)
 
 def render_regional_deep_dive(df):
     if df.empty: return
@@ -291,13 +314,12 @@ def classify_customers(df, target_year):
     return base_info
 
 # --------------------------------------------------------------------------------
-# 4. 필터 및 실행 (기본 틀 유지 및 공유 링크 기능 통합)
+# 4. 필터 및 실행
 # --------------------------------------------------------------------------------
 DRIVE_FILE_ID = "1lFGcQST27rBuUaXcuOJ7yRnMlQWGyxfr"
 df_raw = load_data_from_drive(DRIVE_FILE_ID)
 if df_raw.empty: st.stop()
 
-# URL 파라미터에서 필터값 로드
 sel_years = get_p('y', [df_raw['년'].max()])
 sel_channels = get_p('c', sorted(df_raw['판매채널'].unique()))
 sel_quarters = get_p('q', sorted(df_raw['분기'].unique()))
@@ -334,7 +356,6 @@ if is_edit_mode:
             st.success("공유 링크가 생성되었습니다!")
             st.code(base_url + p_string, language="text")
 
-# 최종 데이터 필터링 (관리자 선택값 or URL 파라미터값 기준)
 df_final = df_raw[
     (df_raw['년'].isin(sel_years)) & 
     (df_raw['판매채널'].isin(sel_channels)) &
@@ -357,8 +378,8 @@ with tab1:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("총 매출액 (년도)", f"{df_raw[df_raw['년'].isin(sel_years)]['매출액'].sum():,.0f} 백만원")
         c2.metric("총 구매처수 (년도)", f"{df_raw[df_raw['년'].isin(sel_years)]['사업자번호'].nunique():,} 처")
-        c3.metric("선택기간 매출액", f"{df_final['매출액'].sum():,.0f} 백만원")
-        c4.metric("선택기간 구매처수", f"{df_final['사업자번호'].nunique():,} 처")
+        c3.metric("분기 매출액", f"{df_final['매출액'].sum():,.0f} 백만원")
+        c4.metric("분기 구매처수", f"{df_final['사업자번호'].nunique():,} 처")
         st.markdown("---")
         col_a, col_b = st.columns([1, 1.5])
         with col_a: st.plotly_chart(px.pie(df_final, values='매출액', names='진료과', hole=0.4, title="진료과별 매출 비중"), use_container_width=True)
@@ -407,6 +428,7 @@ with tab2:
         st.dataframe(hist_df[['매출일자', '제품명', '매출액', '수량']].style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
 
 with tab3:
+    # 탭 3 렌더링 호출
     render_winback_quality(df_final, df_raw, sel_years[0])
     st.markdown("---")
     st.markdown("### 🔄 재유입 기여 비중 및 이탈 전 구매 품목")
@@ -414,7 +436,9 @@ with tab3:
     df_f['이전_제품'] = df_f.groupby('사업자번호')['제품명'].shift(1)
     df_f['구매간격'] = (df_f['매출일자'] - df_f.groupby('사업자번호')['매출일자'].shift(1)).dt.days
     res = df_final.merge(df_f[['사업자번호', '매출일자', '이전_제품', '구매간격']], on=['사업자번호', '매출일자'], how='left')
-    res = res[res['구매간격'] >= 90]
+    
+    # 탭 3 메인 리스트 기준과 동일하게 180일 적용
+    res = res[res['구매간격'] >= 180]
     if not res.empty:
         col_pie, col_table = st.columns([1, 1])
         with col_pie: st.plotly_chart(px.pie(res, values='매출액', names='제품명', title="재유입 매출 기여 비중"), use_container_width=True)
@@ -425,7 +449,7 @@ with tab3:
         if len(ev_res.selection.rows) > 0:
             s_p = res_sum.iloc[ev_res.selection.rows[0]]['제품명']
             st.plotly_chart(px.bar(res[res['제품명'] == s_p].groupby('이전_제품').size().reset_index(name='count').sort_values('count', ascending=False).head(10), x='count', y='이전_제품', orientation='h', title=f"[{s_p}] 복귀 고객의 과거 주력 제품"), use_container_width=True)
-    else: st.info("선택 기간 내 재유입 데이터 없음")
+    else: st.info("선택 기간 내 재유입 데이터(6개월 공백 기준) 없음")
 
 with tab4:
     render_regional_deep_dive(df_final)
@@ -454,4 +478,3 @@ with tab5:
         sel_p_name = p_main.iloc[ev_p.selection.rows[0]]['제품명']
         p_detail = df_final[df_final['제품명'] == sel_p_name].groupby('거래처명').agg({'매출액': 'sum'}).reset_index().sort_values('매출액', ascending=False)
         st.dataframe(p_detail.style.format({'매출액': '{:,.1f} 백만원'}), use_container_width=True)
-
