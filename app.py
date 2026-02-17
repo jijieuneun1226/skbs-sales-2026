@@ -576,7 +576,7 @@ with tab5:
 # 6. [브랜드관 성과 분석 보완] 누락된 차트 2종 및 단위 수정 완벽 반영
 # --------------------------------------------------------------------------------
 with tab6:
-    st.markdown("### 🏠 브랜드관 성과 및 마케팅 효용성 분석")
+    st.markdown("### 🏠 브랜드관 성과")
     t_year = sel_years[0]
     
     if not brand_data_dict or brand_data_dict['Brand_Total'].empty:
@@ -606,6 +606,8 @@ with tab6:
         atv = (conv_sales * 1000000 / conv_cnt) if conv_cnt > 0 else 0
 
         st.markdown(f"#### 🚀 브랜드관 성과 Summary ({t_year}년)")
+         st.markdown("""<div class="info-box">
+    <b>💡 분석 지표 기준:</b> 브랜드관 전환 매출 : 브랜드관을 통해 구매한 금액</div>""", unsafe_allow_html=True)
         with st.container(border=True):
             c1, c2, c3 = st.columns([1.2, 1, 1.2])
             with c1:
@@ -617,15 +619,13 @@ with tab6:
             with c3:
                 st.metric("💳 평균 객단가 (ATV)", f"{atv:,.0f} 원")
                 st.write(f"누적 페이지뷰: **{pv:,} PV**")
-
-        st.markdown("#### 📊 브랜드관 운영 총괄 성과")
         st.table(pd.DataFrame({"구분": ["UV (방문자수)", "브랜드관 전환 매출액", "구매 전환 처수", "객단가 (ATV)"], 
                                "성과 지표": [f"{uv:,} 명", f"{conv_sales:,.1f} 백만원", f"{conv_cnt:,} 처", f"{atv:,.0f} 원"]}))
 
         # [수정 반영] 월별 추이 차트 대신 브랜드관 주문 Top 5 제품 표 구성
         col_l, col_r = st.columns([1.5, 1])
         with col_l:
-            st.markdown(f"#### 🏆 {t_year}년 브랜드관 인기 제품 Top 5")
+            st.markdown(f"#### 🏆 {t_year}년 브랜드관 구매 Top 5")
             if not df_d.empty:
                 # 제품별 매출 집계 및 비중 계산
                 top5_df = df_d.groupby('상품명_매핑').agg({'매출_백만': 'sum'}).reset_index()
@@ -651,3 +651,4 @@ with tab6:
             if not df_d.empty: 
                 fig_pie = px.pie(df_d, values='매출', names='진료과', hole=0.4)
                 st.plotly_chart(fig_pie, use_container_width=True)
+
