@@ -406,10 +406,15 @@ with tab2:
         st.write(f"• 최고 매출 거래처: **{top_v['거래처명']}** ({top_v['매출액']:,.1f} 백만원)")
 
         st.subheader("✔️ Insight")
+        # VIP 이탈 위험 로직 수정 (들여쓰기 주의)
         if risk_cnt > 0:
-    st.write(f"• **VIP 이탈 위험 알림:** 상위 100처 중 **{risk_cnt}처**가 90일 이상 구매가 없습니다. 특히 **{ranking_v[ranking_v['상태'] == '🚨 이탈위험'].iloc[0]['거래처명']}** 등의 관리가 시급합니다.")
-else:
-    st.write(f"• **VIP 이탈 위험 알림:** 현재 상위 100처 중 90일 이상 구매가 없는 이탈 위험 처수는 없습니다. **{top_v['거래처명']}** 등 주요 VIP의 유지 관리에 집중하세요.")
+            # 실제 이탈 위험군이 있을 때만 해당 업체명 노출
+            danger_name = ranking_v[ranking_v['상태'] == '🚨 이탈위험'].iloc[0]['거래처명']
+            st.write(f"• **VIP 이탈 위험 알림:** 상위 100처 중 **{risk_cnt}처**가 90일 이상 구매가 없습니다. 특히 **{danger_name}** 등의 관리가 시급합니다.")
+        else:
+            # 이탈 위험군이 0명일 때 출력될 문구
+            st.write(f"• **VIP 이탈 위험 알림:** 현재 상위 100처 중 90일 이상 구매가 없는 이탈 위험 처수는 없습니다. **{top_v['거래처명']}** 등 주요 VIP의 유지 관리에 집중하세요.")
+
         st.write(f"• **신규 vs 이탈 밸런스:** 금기 신규 유입 {st_c.get('🆕 신규 (New)',0)}처 대비 이탈 {st_c.get('📉 1년 이탈',0)}처가 발생 중입니다. 기존 고객 수성에 집중이 필요합니다.")
         st.write(f"• **진료과 집중도 리스크:** 현재 매출의 **{(dept_sum.max()/total_s*100):.1f}%**가 **{dept_sum.index[0]}**에 편중되어 있습니다.")
 
@@ -662,6 +667,7 @@ with tab6:
             if not df_d.empty: 
                 fig_pie = px.pie(df_d, values='매출', names='진료과', hole=0.4)
                 st.plotly_chart(fig_pie, use_container_width=True)
+
 
 
 
